@@ -1149,26 +1149,28 @@ def render_admin():
         )
 
     st.write("---")
-    if st.button("📨 Enviar consolidado del día", type="primary", use_container_width=True):
-        with st.spinner("Generando y enviando correo..."):
+    if st.button("📝 Crear borrador en Outlook", type="primary", use_container_width=True):
+        with st.spinner("Armando correo y guardando borrador..."):
             try:
                 from send_consolidado_email import main as send_main
-                result = send_main(dry_run=False)
+                result = send_main(mode="draft")
                 st.success(
-                    f"Correo enviado a {result['destinatarios']} destinatarios. "
-                    f"{result['enviadas']} carga(s), {result['fotos']} foto(s) adjuntas."
+                    f"✅ Borrador creado en carpeta '{result.get('folder', 'Drafts')}'. "
+                    f"{result['enviadas']} carga(s) · {result['fotos']} foto(s) · "
+                    f"{result['destinatarios']} destinatario(s).\n\n"
+                    f"Abre Outlook → **Borradores**, revísalo y envíalo manualmente."
                 )
             except Exception as e:
-                st.error(f"Error al enviar: {e}")
+                st.error(f"Error al crear borrador: {e}")
 
     if st.button("🔎 Vista previa (dry-run)", use_container_width=True):
         with st.spinner("Generando preview..."):
             try:
                 from send_consolidado_email import main as send_main
-                result = send_main(dry_run=True)
+                result = send_main(mode="dry")
                 st.info(
-                    f"[DRY-RUN] Se enviaría a {result['destinatarios']} destinatarios "
-                    f"con {result['enviadas']} carga(s) y {result['fotos']} foto(s)."
+                    f"[DRY-RUN] Borrador contendría {result['enviadas']} carga(s), "
+                    f"{result['fotos']} foto(s), {result['destinatarios']} destinatario(s)."
                 )
             except Exception as e:
                 st.error(f"Error en preview: {e}")

@@ -1,24 +1,29 @@
-"""Genera y envía el correo consolidado con daños declarados del día.
+"""Genera el correo consolidado con daños declarados del día.
 
-- Lee cargas finalizadas con `sin_danos=0 AND enviada_at IS NULL`
-- Construye HTML imitando el formato de Captura.JPG (bloque verde por carga,
-  tabla OP/CL | DAÑO)
-- Adjunta las fotos de cada carga (data/fotos/...)
-- Envía vía SMTP Outlook usando OUTLOOK_EMAIL / OUTLOOK_PASSWORD
-- Marca las cargas como enviadas
+Modos:
+- draft (recomendado): crea borrador en la carpeta Borradores/Drafts de Outlook via IMAP APPEND
+- send: envía directamente vía SMTP
+- dry-run: solo muestra info, no toca nada
+
+Lee cargas finalizadas con `sin_danos=0 AND enviada_at IS NULL`, construye HTML
+con bloque por carga (tabla OP/CL | DAÑO), adjunta fotos, marca como enviadas.
 
 Uso:
-    python tools/send_consolidado_email.py [--dry-run]
+    python tools/send_consolidado_email.py --draft     # crea borrador
+    python tools/send_consolidado_email.py --send      # envía
+    python tools/send_consolidado_email.py --dry-run   # preview
 """
 
 from __future__ import annotations
 
+import imaplib
 import os
 import smtplib
 import sys
+import time
 from datetime import date, datetime
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.utils import formataddr, formatdate
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -43,6 +48,8 @@ OUTLOOK_EMAIL = os.getenv("OUTLOOK_EMAIL") or os.getenv("REMITENTE_DANOS", "")
 OUTLOOK_PASSWORD = os.getenv("OUTLOOK_PASSWORD", "")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.office365.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+IMAP_SERVER = os.getenv("IMAP_SERVER", "outlook.office365.com")
+IMAP_PORT = int(os.getenv("IMAP_PORT", "993"))
 DESTINATARIOS = [
     s.strip() for s in os.getenv("DESTINATARIOS_DANOS", "").split(",") if s.strip()
 ]
@@ -149,7 +156,55 @@ def _attach_photos(msg: EmailMessage, fotos: list[Path]) -> int:
     return adjuntadas
 
 
-def main(dry_run: bool = False) -> dict:
+def _find_drafts_folder(imap: imaplib.IMAP4_SSL) -> str:
+    """Detecta la carpeta de borradores (Drafts/Borradores) en la cuenta IMAP."""
+    # Intentar nombres comunes primero (rápido)
+    for fname in ("Drafts", "Borradores", "INBOX/Drafts", "INBOX/Borradores"):
+        status, _ = imap.select(f'"{fname}"', readonly=False)
+        if status == "OK":
+            return fname
+
+    # Fallback: parsear LIST y buscar por flag \Drafts
+    status, folders = imap.list()
+    if status != "OK" or not folders:
+        raise RuntimeError("No se pudo listar carpetas IMAP")
+    for line in folders:
+        decoded = line.decode() if isinstance(line, bytes) else line
+        if "\\Drafts" in decoded:
+            # formato: (\HasNoChildren \Drafts) "/" "Drafts"
+            parts = decoded.rsplit(' "', 1)
+            if len(parts) == 2:
+                name = parts[1].rstrip('"').strip('"')
+                if imap.select(f'"{name}"')[0] == "OK":
+                    return name
+    raise RuntimeError("No se encontró carpeta de borradores")
+
+
+def _save_as_draft(msg: EmailMessage) -> str:
+    """Guarda el mensaje como borrador via IMAP APPEND. Devuelve nombre del folder."""
+    if "Date" not in msg:
+        msg["Date"] = formatdate(localtime=True)
+
+    with imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT) as imap:
+        imap.login(OUTLOOK_EMAIL, OUTLOOK_PASSWORD)
+        folder = _find_drafts_folder(imap)
+        date_str = imaplib.Time2Internaldate(time.time())
+        result = imap.append(f'"{folder}"', "\\Draft", date_str, msg.as_bytes())
+        if result[0] != "OK":
+            raise RuntimeError(f"IMAP APPEND falló: {result}")
+    return folder
+
+
+def main(dry_run: bool = False, mode: str = "draft") -> dict:
+    """
+    mode: "draft" (crea borrador IMAP), "send" (envía SMTP), "dry" (preview).
+    El parámetro dry_run=True fuerza mode="dry" (compat).
+    """
+    if dry_run:
+        mode = "dry"
+    if mode not in ("draft", "send", "dry"):
+        raise ValueError(f"mode inválido: {mode}")
+
     if not OUTLOOK_EMAIL or not OUTLOOK_PASSWORD:
         sys.exit("ERROR: OUTLOOK_EMAIL u OUTLOOK_PASSWORD no definidos en .env")
     if not DESTINATARIOS:
@@ -158,7 +213,7 @@ def main(dry_run: bool = False) -> dict:
     cargas_data, fotos = _gather_data()
     if not cargas_data:
         print("No hay cargas finalizadas pendientes de envío.")
-        return {"enviadas": 0, "fotos": 0, "destinatarios": 0}
+        return {"enviadas": 0, "fotos": 0, "destinatarios": 0, "mode": mode}
 
     hoy = date.today()
     asunto = f"Respaldo de Productos declarados con daños de embalaje en andenes {hoy.strftime('%d-%m-%Y')}"
@@ -181,32 +236,41 @@ def main(dry_run: bool = False) -> dict:
     print(f"Cargas incluidas: {len(cargas_data)}")
     print(f"Fotos adjuntas: {n_fotos}")
 
-    if dry_run:
-        print("[DRY-RUN] No se envió el correo.")
-        return {
-            "enviadas": len(cargas_data),
-            "fotos": n_fotos,
-            "destinatarios": len(DESTINATARIOS),
-            "dry_run": True,
-        }
+    base_result = {
+        "enviadas": len(cargas_data),
+        "fotos": n_fotos,
+        "destinatarios": len(DESTINATARIOS),
+        "mode": mode,
+    }
 
+    if mode == "dry":
+        print("[DRY-RUN] No se envió ni guardó nada.")
+        return {**base_result, "dry_run": True}
+
+    if mode == "draft":
+        print(f"Creando borrador en {IMAP_SERVER}:{IMAP_PORT}...")
+        folder = _save_as_draft(msg)
+        numeros = [c["numero_carga"] for c in cargas_data]
+        marcar_cargas_enviadas(numeros)
+        print(f"✓ Borrador creado en carpeta '{folder}'. Cargas marcadas: {numeros}")
+        return {**base_result, "folder": folder}
+
+    # mode == "send"
     print(f"Enviando vía {SMTP_SERVER}:{SMTP_PORT}...")
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as smtp:
         smtp.starttls()
         smtp.login(OUTLOOK_EMAIL, OUTLOOK_PASSWORD)
         smtp.send_message(msg)
-
     numeros = [c["numero_carga"] for c in cargas_data]
     marcar_cargas_enviadas(numeros)
     print(f"✓ Correo enviado. Cargas marcadas como enviadas: {numeros}")
-
-    return {
-        "enviadas": len(cargas_data),
-        "fotos": n_fotos,
-        "destinatarios": len(DESTINATARIOS),
-    }
+    return base_result
 
 
 if __name__ == "__main__":
-    dry = "--dry-run" in sys.argv
-    main(dry_run=dry)
+    if "--dry-run" in sys.argv:
+        main(mode="dry")
+    elif "--send" in sys.argv:
+        main(mode="send")
+    else:
+        main(mode="draft")
