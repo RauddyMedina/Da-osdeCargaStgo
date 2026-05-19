@@ -21,6 +21,12 @@ DB_PATH = DATA_DIR / "declaracion.db"
 
 TIPOS_DANO = ("01", "02", "03", "04", "Rechazado en anden por daños")
 
+OPERARIOS_DEFECTO = (
+    "Vicente Caniullan",
+    "Benjamin",
+    "Maryari",
+)
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cargas (
@@ -118,6 +124,18 @@ def _migrar_danos_pk(conn: sqlite3.Connection) -> None:
     )
 
 
+def _seed_usuarios_defecto(conn: sqlite3.Connection) -> None:
+    """Si la tabla `usuarios` está vacía, agrega los operarios iniciales.
+    Idempotente: solo siembra si no hay nadie."""
+    n = conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
+    if n > 0:
+        return
+    conn.executemany(
+        "INSERT OR IGNORE INTO usuarios (nombre, activo) VALUES (?, 1)",
+        [(n,) for n in OPERARIOS_DEFECTO],
+    )
+
+
 def init_db() -> None:
     """Create tables if they don't exist and enable WAL for concurrency."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -126,6 +144,7 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
+        _seed_usuarios_defecto(conn)
         conn.commit()
 
 

@@ -5,18 +5,12 @@ Idempotente: usa INSERT OR IGNORE. Se puede correr múltiples veces.
 
 from __future__ import annotations
 
-from db import init_db, upsert_usuario, listar_usuarios_activos
-
-OPERARIOS_INICIALES = [
-    "Vicente Caniullan",
-    "Benjamin",
-    "Maryari",
-]
+from db import OPERARIOS_DEFECTO, init_db, listar_usuarios_activos, upsert_usuario
 
 
 def main() -> None:
     init_db()
-    for nombre in OPERARIOS_INICIALES:
+    for nombre in OPERARIOS_DEFECTO:
         upsert_usuario(nombre)
     activos = listar_usuarios_activos()
     print(f"Usuarios activos ({len(activos)}):")
