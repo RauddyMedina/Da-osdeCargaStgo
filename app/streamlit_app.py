@@ -609,13 +609,19 @@ def header(titulo: str, mostrar_atras: bool = False, mostrar_sync: bool = False)
                         try:
                             from sync_cargas_outlook import main as sync_main
                             result = sync_main()
-                            st.success(
+                            st.session_state["sync_result"] = ("ok",
                                 f"Sync OK — {result['correos_procesados']} correos, "
                                 f"{result['cargas_nuevas']} cargas, "
                                 f"{result['items_nuevos']} items"
                             )
+                        except SystemExit:
+                            st.session_state["sync_result"] = ("error",
+                                "Sync vía Outlook Desktop no disponible en este servidor. "
+                                "Requiere Windows con Outlook instalado."
+                            )
                         except Exception as e:
-                            st.error(f"Error en sync: {e}")
+                            st.session_state["sync_result"] = ("error", f"Error en sync: {e}")
+                    st.rerun()
 
 
 def logout_button():
@@ -721,6 +727,14 @@ def render_bottom_nav():
 def view_selector_fecha():
     logout_button()
     header("Declaración Andén", mostrar_sync=True)
+
+    if "sync_result" in st.session_state:
+        kind, msg = st.session_state["sync_result"]
+        del st.session_state["sync_result"]
+        if kind == "ok":
+            st.success(msg)
+        else:
+            st.error(msg)
 
     st.markdown(
         "<div style='text-align:center; margin-top: 30px; margin-bottom: 20px;'>"
