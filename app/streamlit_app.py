@@ -961,23 +961,34 @@ def view_detalle():
     st.caption("Una vez declarados los daños de todas las entregas, sube las fotos aquí.")
 
     if not bloqueado:
-        # Opción A: adjuntar desde galería (multi-archivo)
+        # Opción A: adjuntar desde galería (multi-archivo) con botón explícito de "Subir"
+        upload_seed_key = f"upload_seed_{nc}"
+        if upload_seed_key not in st.session_state:
+            st.session_state[upload_seed_key] = 0
+
         uploaded = st.file_uploader(
             "📁 Adjuntar fotos desde el celular",
             type=["jpg", "jpeg", "png", "heic", "heif", "webp"],
             accept_multiple_files=True,
-            key=f"upload_{nc}",
+            key=f"upload_{nc}_{st.session_state[upload_seed_key]}",
             help="Selecciona una o varias fotos de la galería",
         )
         if uploaded:
-            for f in uploaded:
-                uid = uuid.uuid4().hex[:8]
-                ext = Path(f.name).suffix.lower() or ".jpg"
-                filename = f"CARGA_{nc}_{uid}{ext}"
-                ruta = FOTOS_DIR / filename
-                ruta.write_bytes(f.getbuffer())
-                agregar_foto(nc, str(ruta.relative_to(DATA_DIR)), st.session_state.usuario)
-            st.rerun()
+            if st.button(
+                f"⬆️ Subir {len(uploaded)} foto(s)",
+                key=f"do_upload_{nc}",
+                type="primary",
+                use_container_width=True,
+            ):
+                for f in uploaded:
+                    uid = uuid.uuid4().hex[:8]
+                    ext = Path(f.name).suffix.lower() or ".jpg"
+                    filename = f"CARGA_{nc}_{uid}{ext}"
+                    ruta = FOTOS_DIR / filename
+                    ruta.write_bytes(f.getbuffer())
+                    agregar_foto(nc, str(ruta.relative_to(DATA_DIR)), st.session_state.usuario)
+                st.session_state[upload_seed_key] += 1  # resetea uploader
+                st.rerun()
 
         # Opción B: tomar foto con la cámara del dispositivo (solo se activa al pulsar el botón)
         cam_key = f"cam_active_{nc}"
