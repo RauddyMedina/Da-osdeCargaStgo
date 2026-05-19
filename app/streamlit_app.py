@@ -1175,7 +1175,42 @@ def render_admin():
             )
 
         st.write("---")
-        if st.button("📝 Crear borrador en Outlook", type="primary", use_container_width=True):
+        if st.button("📋 Ver contenido del correo", type="primary", use_container_width=True):
+            try:
+                from send_consolidado_email import _gather_data, _build_html
+                from datetime import date as _date
+                cargas_data, fotos = _gather_data()
+                if not cargas_data:
+                    st.info("No hay cargas con daños pendientes de envío.")
+                else:
+                    hoy = _date.today()
+                    asunto = f"Respaldo de Productos declarados con daños de embalaje en andenes {hoy.strftime('%d-%m-%Y')}"
+                    html = _build_html(cargas_data, hoy)
+                    st.success(f"✅ {len(cargas_data)} carga(s) con daños · {len(fotos)} foto(s)")
+                    st.markdown(f"**Asunto:** `{asunto}`")
+                    st.markdown("**Copiá el HTML y pegalo en un correo nuevo en Outlook:**")
+                    st.text_area("HTML del correo", value=html, height=300, label_visibility="collapsed")
+                    st.markdown("**Vista previa:**")
+                    st.markdown(html, unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Error generando contenido: {e}")
+
+        if st.button("✅ Marcar como enviadas (envío manual)", use_container_width=True):
+            try:
+                from send_consolidado_email import _gather_data
+                from db import marcar_cargas_enviadas
+                cargas_data, _ = _gather_data()
+                if not cargas_data:
+                    st.info("No hay cargas pendientes de marcar.")
+                else:
+                    numeros = [c["numero_carga"] for c in cargas_data]
+                    marcar_cargas_enviadas(numeros)
+                    st.success(f"✅ {len(numeros)} carga(s) marcadas como enviadas: {', '.join(numeros)}")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+        if st.button("📝 Crear borrador en Outlook", use_container_width=True):
             with st.spinner("Armando correo y guardando borrador..."):
                 try:
                     from send_consolidado_email import main as send_main
@@ -1188,18 +1223,6 @@ def render_admin():
                     )
                 except Exception as e:
                     st.error(f"Error al crear borrador: {e}")
-
-        if st.button("🔎 Vista previa (dry-run)", use_container_width=True):
-            with st.spinner("Generando preview..."):
-                try:
-                    from send_consolidado_email import main as send_main
-                    result = send_main(mode="dry")
-                    st.info(
-                        f"[DRY-RUN] Borrador contendría {result['enviadas']} carga(s), "
-                        f"{result['fotos']} foto(s), {result['destinatarios']} destinatario(s)."
-                    )
-                except Exception as e:
-                    st.error(f"Error en preview: {e}")
 
     # ====== Mantenimiento ======
     st.write("---")
