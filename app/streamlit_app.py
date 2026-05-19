@@ -900,15 +900,13 @@ def view_detalle():
 
     # Buscador con filtrado en tiempo real
     st.write("---")
-    search_key = f"search_{nc}"
-    if search_key not in st.session_state:
-        st.session_state[search_key] = ""
-
-    def _on_search_change():
-        pass  # el rerun es automático al cambiar el widget
+    ver_key = f"search_ver_{nc}"
+    if ver_key not in st.session_state:
+        st.session_state[ver_key] = 0
+    search_key = f"search_{nc}_{st.session_state[ver_key]}"
 
     def _clear_search():
-        st.session_state[search_key] = ""
+        st.session_state[ver_key] += 1
 
     col_s, col_x = st.columns([5, 1])
     with col_s:
@@ -916,13 +914,12 @@ def view_detalle():
             "🔍 Buscar ENTREGA",
             key=search_key,
             placeholder="Escribe cualquier parte del número...",
-            on_change=_on_search_change,
             label_visibility="collapsed",
         ).strip()
     with col_x:
         st.button(
             "✕",
-            key=f"clear_{nc}",
+            key=f"clear_{nc}_{st.session_state[ver_key]}",
             help="Limpiar búsqueda",
             use_container_width=True,
             on_click=_clear_search,
@@ -973,7 +970,7 @@ def view_detalle():
             with col_g:
                 if st.button("Guardar", key=f"save_{nc}_{entrega}", disabled=bloqueado, use_container_width=True):
                     set_danos_for_entrega(nc, entrega, seleccionados, st.session_state.usuario)
-                    st.session_state[f"search_{nc}"] = ""
+                    st.session_state[f"search_ver_{nc}"] = st.session_state.get(f"search_ver_{nc}", 0) + 1
                     st.rerun()
             with col_d:
                 if tipos_actuales and st.button("Eliminar", key=f"del_{nc}_{entrega}", disabled=bloqueado, use_container_width=True):
