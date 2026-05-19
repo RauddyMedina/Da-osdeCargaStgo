@@ -607,18 +607,15 @@ def header(titulo: str, mostrar_atras: bool = False, mostrar_sync: bool = False)
                 if st.button("↻ Sync", key=f"sync_{titulo}", help="Sincronizar correos"):
                     with st.spinner("Sincronizando correos de Outlook..."):
                         try:
-                            from sync_cargas_outlook import main as sync_main
+                            from sync_cargas_imap import main as sync_main
                             result = sync_main()
                             st.session_state["sync_result"] = ("ok",
                                 f"Sync OK — {result['correos_procesados']} correos, "
                                 f"{result['cargas_nuevas']} cargas, "
                                 f"{result['items_nuevos']} items"
                             )
-                        except SystemExit:
-                            st.session_state["sync_result"] = ("error",
-                                "Sync vía Outlook Desktop no disponible en este servidor. "
-                                "Requiere Windows con Outlook instalado."
-                            )
+                        except SystemExit as e:
+                            st.session_state["sync_result"] = ("error", f"Sync abortado: {e}")
                         except Exception as e:
                             st.session_state["sync_result"] = ("error", f"Error en sync: {e}")
                     st.rerun()

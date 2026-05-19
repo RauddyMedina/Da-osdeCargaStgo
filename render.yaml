@@ -48,3 +48,25 @@ services:
         value: "587"
       - key: DESTINATARIOS_DANOS
         sync: false
+
+  - type: cron
+    name: sync-cargas-imap
+    env: python
+    schedule: "0 12-23 * * 1-5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python tools/sync_cargas_imap.py
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: OUTLOOK_EMAIL
+        sync: false
+      - key: OUTLOOK_PASSWORD
+        sync: false
+      - key: IMAP_SERVER
+        value: outlook.office365.com
+      - key: IMAP_PORT
+        value: "993"
+      - key: IMAP_FOLDER
+        value: EasyGo
+      - key: DIAS_VENTANA
+        value: "7"
