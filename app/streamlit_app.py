@@ -1175,23 +1175,100 @@ def render_admin():
             )
 
         st.write("---")
-        if st.button("📋 Ver contenido del correo", type="primary", use_container_width=True):
+        if st.button("📋 Preparar correo consolidado", type="primary", use_container_width=True):
             try:
-                from send_consolidado_email import _gather_data, _build_html
+                from send_consolidado_email import _gather_data
+                from collections import defaultdict
                 from datetime import date as _date
+                import urllib.parse, os as _os
+
                 cargas_data, fotos = _gather_data()
                 if not cargas_data:
                     st.info("No hay cargas con daños pendientes de envío.")
                 else:
                     hoy = _date.today()
-                    asunto = f"Respaldo de Productos declarados con daños de embalaje en andenes {hoy.strftime('%d-%m-%Y')}"
-                    html = _build_html(cargas_data, hoy)
+                    fecha_str = hoy.strftime("%d-%m-%Y")
+                    asunto = f"Respaldo de Productos declarados con daños de embalaje en andenes {fecha_str}"
+
+                    # Construir HTML agrupando daños por entrega
+                    bloques = []
+                    for c in cargas_data:
+                        grouped = defaultdict(list)
+                        for entrega, tipo in c["danos"]:
+                            grouped[entrega].append(tipo)
+                        filas_html = "".join(
+                            f"<tr>"
+                            f"<td style='border:1px solid #444;padding:4px 8px;'>{entrega}</td>"
+                            f"<td style='border:1px solid #444;padding:4px 8px;'>{' / '.join(tipos)}</td>"
+                            f"</tr>"
+                            for entrega, tipos in sorted(grouped.items())
+                        )
+                        bloques.append(f"""
+<table style="border-collapse:collapse;margin-bottom:18px;font-family:Arial,sans-serif;font-size:13px;">
+  <tr>
+    <td style="background:#a9d08e;font-weight:bold;padding:6px 12px;border:1px solid #444;width:140px;">{fecha_str}</td>
+    <td style="background:#a9d08e;font-weight:bold;padding:6px 12px;border:1px solid #444;">CARGA:{c['numero_carga']}</td>
+  </tr>
+  <tr>
+    <td style="background:#a9d08e;font-weight:bold;padding:4px 8px;border:1px solid #444;">OP/CL</td>
+    <td style="background:#a9d08e;font-weight:bold;padding:4px 8px;border:1px solid #444;">DAÑO</td>
+  </tr>
+  {filas_html}
+</table>""")
+
+                    html = (
+                        "<html><body style='font-family:Arial,sans-serif;font-size:13px;'>"
+                        "<p>Estimados,</p>"
+                        "<p>A continuación, le envío los respaldos de productos identificados con daños de embalaje en andenes:</p>"
+                        + "".join(bloques)
+                        + "<p>Adjunto fotos de las hojas de carga físicas como respaldo.</p>"
+                        "<p>Saludos cordiales.</p>"
+                        "</body></html>"
+                    )
+
+                    destinatarios = [s.strip() for s in _os.getenv("DESTINATARIOS_DANOS", "").split(",") if s.strip()]
+                    mailto = f"mailto:{','.join(destinatarios)}?subject={urllib.parse.quote(asunto)}"
+
                     st.success(f"✅ {len(cargas_data)} carga(s) con daños · {len(fotos)} foto(s)")
                     st.markdown(f"**Asunto:** `{asunto}`")
-                    st.markdown("**Copiá el HTML y pegalo en un correo nuevo en Outlook:**")
-                    st.text_area("HTML del correo", value=html, height=300, label_visibility="collapsed")
-                    st.markdown("**Vista previa:**")
+
+                    # Botón abrir Outlook
+                    st.markdown(
+                        f'<a href="{mailto}" target="_blank" style="display:inline-block;'
+                        f'background:#ff6600;color:white;padding:10px 20px;border-radius:8px;'
+                        f'text-decoration:none;font-weight:bold;margin-bottom:12px;">'
+                        f'📧 Abrir Outlook con asunto y destinatarios</a>',
+                        unsafe_allow_html=True,
+                    )
+
+                    # Botón copiar HTML al portapapeles via JS
+                    html_escaped = html.replace("\\", "\\\\").replace("`", "\\`")
+                    st.components.v1.html(f"""
+<style>
+  #btn-copy {{
+    background: #444; color: white; border: none; padding: 10px 20px;
+    border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold;
+    margin-bottom: 8px; width: 100%;
+  }}
+  #btn-copy:hover {{ background: #555; }}
+</style>
+<textarea id="html-src" style="position:absolute;left:-9999px;top:-9999px;">{html.replace('<', '&lt;').replace('>', '&gt;')}</textarea>
+<button id="btn-copy" onclick="
+  var t = document.createElement('textarea');
+  t.value = `{html_escaped}`;
+  document.body.appendChild(t);
+  t.select();
+  document.execCommand('copy');
+  document.body.removeChild(t);
+  this.textContent = '✅ HTML copiado al portapapeles';
+  setTimeout(() => this.textContent = '📋 Copiar HTML al portapapeles', 3000);
+">📋 Copiar HTML al portapapeles</button>
+""", height=60)
+
+                    st.caption("Flujo: Abrí Outlook → nuevo correo → pegá el HTML en el cuerpo (Ctrl+V) → enviá → volvé acá y presioná 'Marcar como enviadas'.")
+                    st.markdown("**Vista previa del correo:**")
                     st.markdown(html, unsafe_allow_html=True)
+
             except Exception as e:
                 st.error(f"Error generando contenido: {e}")
 
