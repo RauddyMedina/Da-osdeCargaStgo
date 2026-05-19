@@ -915,16 +915,21 @@ def view_detalle():
         )
 
     # Lista de entregas
-    if busqueda:
-        entregas_filtradas = [e for e in entregas if busqueda in str(e["entrega"])]
-    else:
-        entregas_filtradas = entregas
-
-    total_filtradas = len(entregas_filtradas)
-    if busqueda:
-        st.caption(f"{total_filtradas} resultado(s) para \"{busqueda}\"")
-
     bloqueado = carga["estado"] == "finalizada" and carga["enviada_at"] is not None
+
+    if busqueda:
+        # Con búsqueda: mostrar todo lo que coincida (el usuario busca algo específico)
+        entregas_filtradas = [e for e in entregas if busqueda in str(e["entrega"])]
+        st.caption(f"{len(entregas_filtradas)} resultado(s) para \"{busqueda}\"")
+    elif not bloqueado:
+        # Sin búsqueda y carga activa: solo mostrar las NO declaradas
+        entregas_filtradas = [e for e in entregas if e["entrega"] not in danos_dict]
+        n_ocultas = len(entregas) - len(entregas_filtradas)
+        if n_ocultas:
+            st.caption(f"✅ {n_ocultas} entrega(s) con daños ya declarados — ver en resumen de arriba")
+    else:
+        # Carga finalizada/enviada: mostrar todas (vista de solo lectura)
+        entregas_filtradas = entregas
 
     for e in entregas_filtradas:
         entrega = e["entrega"]
