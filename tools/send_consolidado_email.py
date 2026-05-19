@@ -39,6 +39,7 @@ DATA_DIR = Path(os.getenv("DATA_DIR", PROJECT_ROOT / "data"))
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 from db import (  # noqa: E402
     cargas_pendientes_de_envio,
+    eliminar_fotos_de_cargas,
     listar_danos_de_carga,
     listar_fotos_de_carga,
     marcar_cargas_enviadas,
@@ -180,6 +181,20 @@ def _find_drafts_folder(imap: imaplib.IMAP4_SSL) -> str:
     raise RuntimeError("No se encontró carpeta de borradores")
 
 
+def _limpiar_fotos(numeros_carga: list[str], fotos: list[Path]) -> int:
+    """Borra archivos de disco y filas DB de fotos ya adjuntadas al correo."""
+    borrados = 0
+    for p in fotos:
+        try:
+            p.unlink()
+            borrados += 1
+        except Exception as e:
+            print(f"  ! No se pudo borrar {p}: {e}")
+    eliminar_fotos_de_cargas(numeros_carga)
+    print(f"  Fotos eliminadas del disco: {borrados}/{len(fotos)}")
+    return borrados
+
+
 def _save_as_draft(msg: EmailMessage) -> str:
     """Guarda el mensaje como borrador via IMAP APPEND. Devuelve nombre del folder."""
     if "Date" not in msg:
@@ -252,6 +267,7 @@ def main(dry_run: bool = False, mode: str = "draft") -> dict:
         folder = _save_as_draft(msg)
         numeros = [c["numero_carga"] for c in cargas_data]
         marcar_cargas_enviadas(numeros)
+        _limpiar_fotos(numeros, fotos)
         print(f"✓ Borrador creado en carpeta '{folder}'. Cargas marcadas: {numeros}")
         return {**base_result, "folder": folder}
 
@@ -263,6 +279,7 @@ def main(dry_run: bool = False, mode: str = "draft") -> dict:
         smtp.send_message(msg)
     numeros = [c["numero_carga"] for c in cargas_data]
     marcar_cargas_enviadas(numeros)
+    _limpiar_fotos(numeros, fotos)
     print(f"✓ Correo enviado. Cargas marcadas como enviadas: {numeros}")
     return base_result
 

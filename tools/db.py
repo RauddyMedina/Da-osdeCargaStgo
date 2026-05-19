@@ -452,6 +452,19 @@ def eliminar_foto(foto_id: int) -> str | None:
     return row["ruta_archivo"]
 
 
+def eliminar_fotos_de_cargas(numeros_carga: list[str]) -> int:
+    """Borra todos los registros fotos_carga para las cargas dadas. Devuelve filas borradas."""
+    if not numeros_carga:
+        return 0
+    placeholders = ",".join("?" * len(numeros_carga))
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"DELETE FROM fotos_carga WHERE numero_carga IN ({placeholders})",
+            numeros_carga,
+        )
+        return cur.rowcount
+
+
 # ---------- Emails procesados ----------
 
 def email_ya_procesado(message_id: str) -> bool:
