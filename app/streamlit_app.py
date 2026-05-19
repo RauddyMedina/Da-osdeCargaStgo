@@ -859,6 +859,23 @@ def view_detalle():
     elif carga["enviada_at"]:
         st.info("Esta carga ya fue enviada en el correo consolidado. No se puede modificar.")
 
+    # ====== Resumen de daños declarados ======
+    if danos_dict:
+        cliente_por_entrega = {e["entrega"]: (e["nombre_cliente"] or "-") for e in entregas}
+        with st.expander(f"📋 Ver {total_danos} daño(s) declarado(s)", expanded=False):
+            for entrega in sorted(danos_dict.keys()):
+                tipos = [d["tipo_dano"] for d in danos_dict[entrega]]
+                cliente = cliente_por_entrega.get(entrega, "-")
+                st.markdown(
+                    f"<div style='padding:8px 10px;margin:4px 0;background:rgba(255,183,77,0.08);"
+                    f"border-left:3px solid #ffb74d;border-radius:6px;'>"
+                    f"<strong style='color:#ffb74d;'>📦 {entrega}</strong> "
+                    f"<span style='color:rgba(255,255,255,0.6);font-size:13px;'>· {cliente}</span><br>"
+                    f"<span style='color:#e8e8ed;font-size:13px;'>{' · '.join(tipos)}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
     # Buscador con filtrado en tiempo real
     st.write("---")
     search_key = f"search_{nc}"
@@ -962,8 +979,21 @@ def view_detalle():
                 agregar_foto(nc, str(ruta.relative_to(DATA_DIR)), st.session_state.usuario)
             st.rerun()
 
-        # Opción B: tomar foto con la cámara del dispositivo
-        with st.expander("📷 …o tomar foto con la cámara", expanded=False):
+        # Opción B: tomar foto con la cámara del dispositivo (solo se activa al pulsar el botón)
+        cam_key = f"cam_active_{nc}"
+        if cam_key not in st.session_state:
+            st.session_state[cam_key] = False
+
+        if not st.session_state[cam_key]:
+            if st.button("📷 Activar cámara para tomar foto", key=f"cam_btn_{nc}", use_container_width=True):
+                st.session_state[cam_key] = True
+                st.rerun()
+        else:
+            col_cam, col_close = st.columns([5, 1])
+            with col_close:
+                if st.button("✕", key=f"cam_close_{nc}", help="Cerrar cámara", use_container_width=True):
+                    st.session_state[cam_key] = False
+                    st.rerun()
             foto = st.camera_input("Tomar foto", key=f"cam_{nc}", label_visibility="collapsed")
             if foto is not None:
                 uid = uuid.uuid4().hex[:8]
@@ -971,27 +1001,28 @@ def view_detalle():
                 ruta = FOTOS_DIR / filename
                 ruta.write_bytes(foto.getbuffer())
                 agregar_foto(nc, str(ruta.relative_to(DATA_DIR)), st.session_state.usuario)
+                st.session_state[cam_key] = False
                 st.rerun()
 
-    # Galería de fotos ya cargadas
+    # Galería de fotos ya cargadas (colapsada por defecto)
     if fotos:
-        st.markdown("**Fotos cargadas:**")
-        cols = st.columns(min(3, len(fotos)))
-        for i, f in enumerate(fotos):
-            with cols[i % 3]:
-                ruta = _resolver_ruta_foto(f["ruta_archivo"])
-                if ruta.exists():
-                    try:
-                        st.image(str(ruta), use_container_width=True)
-                    except Exception:
-                        st.caption(f"📎 {ruta.name}")
-                if not bloqueado and st.button("🗑️ Eliminar", key=f"delfoto_{f['id']}", use_container_width=True):
-                    path_str = eliminar_foto(f["id"])
-                    if path_str:
-                        p = _resolver_ruta_foto(path_str)
-                        if p.exists():
-                            p.unlink()
-                    st.rerun()
+        with st.expander(f"🖼️ Ver fotos cargadas ({len(fotos)})", expanded=False):
+            cols = st.columns(min(3, len(fotos)))
+            for i, f in enumerate(fotos):
+                with cols[i % 3]:
+                    ruta = _resolver_ruta_foto(f["ruta_archivo"])
+                    if ruta.exists():
+                        try:
+                            st.image(str(ruta), use_container_width=True)
+                        except Exception:
+                            st.caption(f"📎 {ruta.name}")
+                    if not bloqueado and st.button("🗑️ Eliminar", key=f"delfoto_{f['id']}", use_container_width=True):
+                        path_str = eliminar_foto(f["id"])
+                        if path_str:
+                            p = _resolver_ruta_foto(path_str)
+                            if p.exists():
+                                p.unlink()
+                        st.rerun()
     else:
         st.markdown(
             "<div class='carga-card' style='text-align:center;padding:24px 20px;'>"
