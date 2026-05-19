@@ -685,6 +685,12 @@ def view_login():
         st.session_state.fecha_sel = date.today()
         st.rerun()
 
+    st.write("")
+    if st.button("🛡️ Panel Supervisor", use_container_width=True):
+        st.session_state.usuario = nombre
+        st.session_state.view = "admin"
+        st.rerun()
+
 
 # ---------- Vista Cargas ----------
 
@@ -1220,6 +1226,10 @@ elif st.session_state.view == "lista_cargas":
     view_lista_cargas()
 elif st.session_state.view == "detalle":
     view_detalle()
+elif st.session_state.view == "admin":
+    logout_button()
+    header("Panel Supervisor", mostrar_atras=True)
+    render_admin()
 else:
     st.session_state.view = "selector_fecha"
     st.rerun()
