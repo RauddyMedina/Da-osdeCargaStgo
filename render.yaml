@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: declaracion-danos
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: DATA_DIR
+        value: /var/data
+      - key: APP_PASSWORD
+        sync: false
+      - key: MIN_FOTOS_POR_CARGA
+        value: "1"
+      - key: OUTLOOK_EMAIL
+        sync: false
+      - key: OUTLOOK_PASSWORD
+        sync: false
+      - key: DESTINATARIOS_DANOS
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        sync: false
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1

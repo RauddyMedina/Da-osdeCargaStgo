@@ -1,0 +1,14 @@
+.env
+.env.local
+.tmp/
+data/declaracion.db
+data/declaracion.db-wal
+data/declaracion.db-shm
+data/fotos/
+__pycache__/
+*.pyc
+# .streamlit/ está versionado (config.toml para Render), pero secrets locales no:
+.streamlit/secrets.toml
+credentials.json
+token.json
+*.log
