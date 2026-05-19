@@ -828,7 +828,9 @@ def view_detalle():
     entregas = listar_entregas_de_carga(nc)
     total_entregas = len(entregas)
     total_danos = len(danos_dict)
-    fotos = listar_fotos_de_carga(nc)
+    fotos_raw = listar_fotos_de_carga(nc)
+    # UI defensiva: ignora filas huérfanas (archivo no existe en disco)
+    fotos = [f for f in fotos_raw if _resolver_ruta_foto(f["ruta_archivo"]).exists()]
 
     # Info card
     st.markdown(
@@ -1130,50 +1132,80 @@ def render_admin():
             "No hay cargas finalizadas pendientes de envío</div></div>",
             unsafe_allow_html=True,
         )
-        return
-
-    st.markdown(
-        f"<div class='date-nav'>📤 <span>{len(pendientes)}</span> carga(s) listas para envío</div>",
-        unsafe_allow_html=True,
-    )
-    for c in pendientes:
-        danos = listar_danos_de_carga(c["numero_carga"])
-        fotos = listar_fotos_de_carga(c["numero_carga"])
+    else:
         st.markdown(
-            f"<div class='carga-card finalizada'>"
-            f"<div class='carga-titulo'>{c['numero_carga']}</div>"
-            f"<div class='carga-sub'>"
-            f"{len(danos)} daño(s) · {len(fotos)} foto(s) · "
-            f"por <strong>{c['finalizada_por']}</strong></div></div>",
+            f"<div class='date-nav'>📤 <span>{len(pendientes)}</span> carga(s) listas para envío</div>",
             unsafe_allow_html=True,
         )
+        for c in pendientes:
+            danos = listar_danos_de_carga(c["numero_carga"])
+            fotos = listar_fotos_de_carga(c["numero_carga"])
+            st.markdown(
+                f"<div class='carga-card finalizada'>"
+                f"<div class='carga-titulo'>{c['numero_carga']}</div>"
+                f"<div class='carga-sub'>"
+                f"{len(danos)} daño(s) · {len(fotos)} foto(s) · "
+                f"por <strong>{c['finalizada_por']}</strong></div></div>",
+                unsafe_allow_html=True,
+            )
 
+        st.write("---")
+        if st.button("📝 Crear borrador en Outlook", type="primary", use_container_width=True):
+            with st.spinner("Armando correo y guardando borrador..."):
+                try:
+                    from send_consolidado_email import main as send_main
+                    result = send_main(mode="draft")
+                    st.success(
+                        f"✅ Borrador creado en carpeta '{result.get('folder', 'Drafts')}'. "
+                        f"{result['enviadas']} carga(s) · {result['fotos']} foto(s) · "
+                        f"{result['destinatarios']} destinatario(s).\n\n"
+                        f"Abre Outlook → **Borradores**, revísalo y envíalo manualmente."
+                    )
+                except Exception as e:
+                    st.error(f"Error al crear borrador: {e}")
+
+        if st.button("🔎 Vista previa (dry-run)", use_container_width=True):
+            with st.spinner("Generando preview..."):
+                try:
+                    from send_consolidado_email import main as send_main
+                    result = send_main(mode="dry")
+                    st.info(
+                        f"[DRY-RUN] Borrador contendría {result['enviadas']} carga(s), "
+                        f"{result['fotos']} foto(s), {result['destinatarios']} destinatario(s)."
+                    )
+                except Exception as e:
+                    st.error(f"Error en preview: {e}")
+
+    # ====== Mantenimiento ======
     st.write("---")
-    if st.button("📝 Crear borrador en Outlook", type="primary", use_container_width=True):
-        with st.spinner("Armando correo y guardando borrador..."):
-            try:
-                from send_consolidado_email import main as send_main
-                result = send_main(mode="draft")
-                st.success(
-                    f"✅ Borrador creado en carpeta '{result.get('folder', 'Drafts')}'. "
-                    f"{result['enviadas']} carga(s) · {result['fotos']} foto(s) · "
-                    f"{result['destinatarios']} destinatario(s).\n\n"
-                    f"Abre Outlook → **Borradores**, revísalo y envíalo manualmente."
+    st.markdown(
+        "<div class='date-nav'>🛠️ <span>Mantenimiento</span></div>",
+        unsafe_allow_html=True,
+    )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("🔎 Detectar fotos huérfanas", use_container_width=True):
+            from limpiar_fotos_huerfanas import escanear_huerfanas
+            r = escanear_huerfanas(apply=False)
+            if r["huerfanas_total"] == 0:
+                st.success("✅ No hay fotos huérfanas. DB limpia.")
+            else:
+                top = sorted(r["detalle"].items(), key=lambda x: -x[1])[:5]
+                detalle_txt = "\n".join(f"- {nc}: {n}" for nc, n in top)
+                st.warning(
+                    f"⚠️ {r['huerfanas_total']} filas huérfanas en "
+                    f"{r['cargas_afectadas']} carga(s). Top 5:\n{detalle_txt}"
                 )
-            except Exception as e:
-                st.error(f"Error al crear borrador: {e}")
-
-    if st.button("🔎 Vista previa (dry-run)", use_container_width=True):
-        with st.spinner("Generando preview..."):
-            try:
-                from send_consolidado_email import main as send_main
-                result = send_main(mode="dry")
-                st.info(
-                    f"[DRY-RUN] Borrador contendría {result['enviadas']} carga(s), "
-                    f"{result['fotos']} foto(s), {result['destinatarios']} destinatario(s)."
-                )
-            except Exception as e:
-                st.error(f"Error en preview: {e}")
+    with col_b:
+        if st.button("🧹 Limpiar huérfanas", type="secondary", use_container_width=True):
+            from limpiar_fotos_huerfanas import escanear_huerfanas
+            with st.spinner("Limpiando..."):
+                r = escanear_huerfanas(apply=True)
+            st.success(
+                f"✅ Borradas {r['borradas']} filas huérfanas de "
+                f"{r['cargas_afectadas']} carga(s)."
+            )
+            st.rerun()
 
 
 # ---------- Router ----------

@@ -465,6 +465,31 @@ def eliminar_fotos_de_cargas(numeros_carga: list[str]) -> int:
         return cur.rowcount
 
 
+def eliminar_fotos_por_ids(ids: list[int]) -> int:
+    """Borra filas fotos_carga por id en bloque. Devuelve filas borradas."""
+    if not ids:
+        return 0
+    with get_conn() as conn:
+        total = 0
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            placeholders = ",".join("?" * len(chunk))
+            cur = conn.execute(
+                f"DELETE FROM fotos_carga WHERE id IN ({placeholders})",
+                chunk,
+            )
+            total += cur.rowcount
+        return total
+
+
+def listar_todas_las_fotos() -> list[sqlite3.Row]:
+    """Devuelve TODAS las filas fotos_carga (para scan global de huérfanas)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT id, numero_carga, ruta_archivo FROM fotos_carga"
+        ).fetchall()
+
+
 # ---------- Emails procesados ----------
 
 def email_ya_procesado(message_id: str) -> bool:
