@@ -607,7 +607,11 @@ def header(titulo: str, mostrar_atras: bool = False, mostrar_sync: bool = False)
                 if st.button("↻ Sync", key=f"sync_{titulo}", help="Sincronizar correos"):
                     with st.spinner("Sincronizando correos de Outlook..."):
                         try:
-                            from sync_cargas_imap import main as sync_main
+                            try:
+                                import win32com.client  # solo disponible en Windows
+                                from sync_cargas_outlook import main as sync_main
+                            except ImportError:
+                                from sync_cargas_imap import main as sync_main
                             result = sync_main()
                             st.session_state["sync_result"] = ("ok",
                                 f"Sync OK — {result['correos_procesados']} correos, "
