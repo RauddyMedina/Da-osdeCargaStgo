@@ -28,3 +28,23 @@ services:
       name: data
       mountPath: /var/data
       sizeGB: 1
+
+  - type: cron
+    name: recordatorio-cargas-pendientes
+    env: python
+    schedule: "0 22 * * 1-5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python tools/send_reminder_cargas.py
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: OUTLOOK_EMAIL
+        sync: false
+      - key: OUTLOOK_PASSWORD
+        sync: false
+      - key: SMTP_SERVER
+        value: smtp.office365.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: DESTINATARIOS_DANOS
+        sync: false

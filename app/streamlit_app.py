@@ -698,10 +698,13 @@ def view_login():
 
 def render_bottom_nav():
     st.markdown("<span class='bottom-nav-marker'></span>", unsafe_allow_html=True)
+    fecha_sel = st.session_state.get("fecha_sel", date.today())
+    n_pend = len(listar_cargas_por_fecha(fecha_sel, estado="por_declarar"))
     c1, c2 = st.columns(2)
     with c1:
         is_active = st.session_state.tab == "por_declarar"
-        if st.button("📋 Por declarar", key="nav_pd", use_container_width=True, type="primary" if is_active else "secondary"):
+        label_pend = f"📋 Por declarar ({n_pend})" if n_pend else "📋 Por declarar"
+        if st.button(label_pend, key="nav_pd", use_container_width=True, type="primary" if is_active else "secondary"):
             st.session_state.tab = "por_declarar"
             st.session_state.view = "lista_cargas"
             st.rerun()
@@ -1217,6 +1220,21 @@ def render_admin():
                 f"{r['cargas_afectadas']} carga(s)."
             )
             st.rerun()
+
+    # ====== Recordatorio ======
+    st.write("---")
+    st.markdown(
+        "<div class='date-nav'>🔔 <span>Recordatorio manual</span></div>",
+        unsafe_allow_html=True,
+    )
+    if st.button("📧 Enviar recordatorio de pendientes (hoy)", use_container_width=True):
+        from send_reminder_cargas import main as _send_reminder
+        with st.spinner("Enviando..."):
+            n = _send_reminder()
+        if n:
+            st.success(f"✅ Recordatorio enviado — {n} carga(s) pendientes mencionadas.")
+        else:
+            st.info("No hay cargas pendientes hoy. No se envió correo.")
 
 
 # ---------- Router ----------
