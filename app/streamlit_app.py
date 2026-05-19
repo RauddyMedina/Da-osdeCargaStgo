@@ -832,7 +832,7 @@ def view_detalle():
     logout_button()
     nc = st.session_state.carga_sel
     if not nc:
-        st.session_state.view = "cargas"
+        st.session_state.view = "lista_cargas"
         st.rerun()
         return
 
@@ -973,6 +973,7 @@ def view_detalle():
             with col_g:
                 if st.button("Guardar", key=f"save_{nc}_{entrega}", disabled=bloqueado, use_container_width=True):
                     set_danos_for_entrega(nc, entrega, seleccionados, st.session_state.usuario)
+                    st.session_state[f"search_{nc}"] = ""
                     st.rerun()
             with col_d:
                 if tipos_actuales and st.button("Eliminar", key=f"del_{nc}_{entrega}", disabled=bloqueado, use_container_width=True):
@@ -1092,7 +1093,7 @@ def view_detalle():
                 use_container_width=True,
             ):
                 finalizar_y_appendear(nc, sin_danos=False)
-                st.session_state.view = "cargas"
+                st.session_state.view = "lista_cargas"
                 st.rerun()
 
         with c2:
@@ -1111,7 +1112,7 @@ def view_detalle():
                     if st.button("Sí, confirmar", key=f"yes_sd_{nc}", use_container_width=True):
                         finalizar_y_appendear(nc, sin_danos=True)
                         st.session_state[confirm_key] = False
-                        st.session_state.view = "cargas"
+                        st.session_state.view = "lista_cargas"
                         st.rerun()
                 with cc2:
                     if st.button("Cancelar", key=f"no_sd_{nc}", use_container_width=True):
