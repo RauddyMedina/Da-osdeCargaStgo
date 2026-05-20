@@ -28,6 +28,9 @@ load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(PARENT_ROOT / ".env")
 
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+sys.path.insert(0, str(PROJECT_ROOT / "app"))
+from upload_endpoint import install as _install_upload_endpoint  # noqa: E402
+_install_upload_endpoint()
 from db import (  # noqa: E402
     TIPOS_DANO,
     agregar_foto,
