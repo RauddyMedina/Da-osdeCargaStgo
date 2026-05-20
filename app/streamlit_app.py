@@ -607,25 +607,11 @@ def header(titulo: str, mostrar_atras: bool = False, mostrar_sync: bool = False)
                     st.rerun()
         with cols[2]:
             if mostrar_sync:
-                if st.button("↻ Sync", key=f"sync_{titulo}", help="Sincronizar correos"):
-                    with st.spinner("Sincronizando correos de Outlook..."):
-                        try:
-                            try:
-                                import win32com.client  # solo disponible en Windows
-                                from sync_cargas_outlook import main as sync_main
-                            except ImportError:
-                                from sync_cargas_imap import main as sync_main
-                            result = sync_main()
-                            st.session_state["sync_result"] = ("ok",
-                                f"Sync OK — {result['correos_procesados']} correos, "
-                                f"{result['cargas_nuevas']} cargas, "
-                                f"{result['items_nuevos']} items"
-                            )
-                        except SystemExit as e:
-                            st.session_state["sync_result"] = ("error", f"Sync abortado: {e}")
-                        except Exception as e:
-                            st.session_state["sync_result"] = ("error", f"Error en sync: {e}")
-                    st.rerun()
+                st.markdown(
+                    "<div style='text-align:right;font-size:11px;"
+                    "color:rgba(255,255,255,0.35);padding-top:10px;'>↻ auto</div>",
+                    unsafe_allow_html=True,
+                )
 
 
 def logout_button():
@@ -731,14 +717,6 @@ def render_bottom_nav():
 def view_selector_fecha():
     logout_button()
     header("Declaración Andén", mostrar_sync=True)
-
-    if "sync_result" in st.session_state:
-        kind, msg = st.session_state["sync_result"]
-        del st.session_state["sync_result"]
-        if kind == "ok":
-            st.success(msg)
-        else:
-            st.error(msg)
 
     st.markdown(
         "<div style='text-align:center; margin-top: 30px; margin-bottom: 20px;'>"
