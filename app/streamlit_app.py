@@ -905,22 +905,46 @@ def view_detalle():
                     unsafe_allow_html=True,
                 )
 
-    # Buscador con filtrado en tiempo real
+    # JS: auto-dispara Enter en el text_input tras 400 ms sin teclear
+    st.components.v1.html("""<script>
+(function(){
+  function patch(){
+    var doc=window.parent.document;
+    var inputs=doc.querySelectorAll('[data-testid="stTextInput"] input');
+    inputs.forEach(function(inp){
+      if(inp._auto) return;
+      inp._auto=true;
+      var t;
+      inp.addEventListener('input',function(){
+        clearTimeout(t);
+        t=setTimeout(function(){
+          inp.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,bubbles:true}));
+        },400);
+      });
+    });
+  }
+  patch(); setInterval(patch,600);
+})();
+</script>""", height=0)
+
+    # Buscador
     st.write("---")
     ver_key = f"search_ver_{nc}"
     if ver_key not in st.session_state:
         st.session_state[ver_key] = 0
     search_key = f"search_{nc}_{st.session_state[ver_key]}"
+    sel_key = f"entrega_sel_{nc}"
 
     def _clear_search():
         st.session_state[ver_key] += 1
+        st.session_state.pop(sel_key, None)
 
     col_s, col_x = st.columns([5, 1])
     with col_s:
         busqueda = st.text_input(
             "🔍 Buscar ENTREGA",
             key=search_key,
-            placeholder="Escribe cualquier parte del número...",
+            placeholder="Escribe el número de entrega...",
             label_visibility="collapsed",
         ).strip()
     with col_x:
@@ -936,31 +960,33 @@ def view_detalle():
     bloqueado = carga["estado"] == "finalizada" and carga["enviada_at"] is not None
 
     if busqueda:
-        # Con búsqueda: mostrar todo lo que coincida (el usuario busca algo específico)
         entregas_filtradas = [e for e in entregas if busqueda in str(e["entrega"])]
         st.caption(f"{len(entregas_filtradas)} resultado(s) para \"{busqueda}\"")
     elif not bloqueado:
-        # Sin búsqueda y carga activa: solo mostrar las NO declaradas
         entregas_filtradas = [e for e in entregas if e["entrega"] not in danos_dict]
         n_ocultas = len(entregas) - len(entregas_filtradas)
         if n_ocultas:
             st.caption(f"✅ {n_ocultas} entrega(s) con daños ya declarados — ver en resumen de arriba")
     else:
-        # Carga finalizada/enviada: mostrar todas (vista de solo lectura)
         entregas_filtradas = entregas
 
     for e in entregas_filtradas:
         entrega = e["entrega"]
         danos_actuales = danos_dict.get(entrega, [])
         tipos_actuales = [d["tipo_dano"] for d in danos_actuales]
-        label_badge = f" — **{', '.join(tipos_actuales)}**" if tipos_actuales else ""
+        badge = f"  ·  {', '.join(tipos_actuales)}" if tipos_actuales else ""
+        is_sel = st.session_state.get(sel_key) == entrega
 
-        with st.expander(
-            f"📦 {entrega} · {e['nombre_cliente'] or '-'}{label_badge}",
-            expanded=False,
-        ):
+        row_label = f"{'▼' if is_sel else '▶'}  📦 {entrega} · {e['nombre_cliente'] or '-'}{badge}"
+        if st.button(row_label, key=f"sel_{nc}_{entrega}", use_container_width=True):
+            if is_sel:
+                st.session_state.pop(sel_key, None)
+            else:
+                st.session_state[sel_key] = entrega
+            st.rerun()
+
+        if is_sel:
             st.caption(f"Comuna: {e['comuna'] or '-'} · Líneas: {e['lineas']} · Bultos: {e['total_bultos'] or 0:.0f}")
-
             st.markdown("**Tipo(s) de daño** _(puedes marcar varios)_")
             seleccionados: list[str] = []
             for tipo in TIPOS_DANO:
@@ -977,7 +1003,8 @@ def view_detalle():
             with col_g:
                 if st.button("Guardar", key=f"save_{nc}_{entrega}", disabled=bloqueado, use_container_width=True):
                     set_danos_for_entrega(nc, entrega, seleccionados, st.session_state.usuario)
-                    st.session_state[f"search_ver_{nc}"] = st.session_state.get(f"search_ver_{nc}", 0) + 1
+                    st.session_state.pop(sel_key, None)
+                    st.session_state[ver_key] = st.session_state.get(ver_key, 0) + 1
                     st.rerun()
             with col_d:
                 if tipos_actuales and st.button("Eliminar", key=f"del_{nc}_{entrega}", disabled=bloqueado, use_container_width=True):
