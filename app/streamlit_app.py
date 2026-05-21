@@ -607,11 +607,27 @@ def header(titulo: str, mostrar_atras: bool = False, mostrar_sync: bool = False)
                     st.rerun()
         with cols[2]:
             if mostrar_sync:
-                st.markdown(
-                    "<div style='text-align:right;font-size:11px;"
-                    "color:rgba(255,255,255,0.35);padding-top:10px;'>↻ auto</div>",
-                    unsafe_allow_html=True,
-                )
+                import platform, subprocess as _sp
+                _es_windows = platform.system() == "Windows"
+                if st.button("↻", key=f"sync_{titulo}", help="Sincronizar cargas desde Outlook"):
+                    if _es_windows:
+                        with st.spinner("Sincronizando..."):
+                            try:
+                                r = _sp.run(
+                                    [sys.executable, "tools/sync_and_push.py"],
+                                    capture_output=True, text=True, timeout=120,
+                                    cwd=str(PROJECT_ROOT),
+                                )
+                                if r.returncode == 0:
+                                    st.session_state["sync_result"] = ("ok", "Sync OK — cargas actualizadas")
+                                else:
+                                    st.session_state["sync_result"] = ("error", r.stderr[-300:] or "Error en sync")
+                            except Exception as e:
+                                st.session_state["sync_result"] = ("error", str(e))
+                    else:
+                        st.session_state["sync_result"] = ("info",
+                            "Haz doble clic en 'Sync Cargas.bat' en tu escritorio del laptop")
+                    st.rerun()
 
 
 def logout_button():
@@ -717,6 +733,15 @@ def render_bottom_nav():
 def view_selector_fecha():
     logout_button()
     header("Declaración Andén", mostrar_sync=True)
+
+    if "sync_result" in st.session_state:
+        kind, msg = st.session_state.pop("sync_result")
+        if kind == "ok":
+            st.success(msg)
+        elif kind == "error":
+            st.error(msg)
+        else:
+            st.info(msg)
 
     st.markdown(
         "<div style='text-align:center; margin-top: 30px; margin-bottom: 20px;'>"
