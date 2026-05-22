@@ -626,7 +626,9 @@ def header(titulo: str, mostrar_atras: bool = False, mostrar_sync: bool = False)
                                 st.session_state["sync_result"] = ("error", str(e))
                     else:
                         st.session_state["sync_result"] = ("info",
-                            "Haz doble clic en 'Sync Cargas.bat' en tu escritorio del laptop")
+                            "El sync corre automático cada 30 min.\n"
+                            "Para sincronizar ahora, ve a tu laptop y haz doble clic en:\n"
+                            "📁  C:\\Users\\Usuario\\Desktop\\Sync Cargas.bat")
                     st.rerun()
 
 
