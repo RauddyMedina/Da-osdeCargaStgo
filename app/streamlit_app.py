@@ -728,6 +728,9 @@ def render_bottom_nav():
             st.session_state.tab = "finalizadas"
             st.session_state.view = "lista_cargas"
             st.rerun()
+    if st.button("📤 Subir cargas (Excel / CSV)", key="nav_subir", use_container_width=True):
+        st.session_state.view = "subir_cargas"
+        st.rerun()
 
 
 # ---------- Vista Selección de Fecha ----------
@@ -1369,6 +1372,49 @@ def render_admin():
             )
             st.rerun()
 
+    # ====== Subir cargas manualmente ======
+    st.write("---")
+    st.markdown(
+        "<div class='date-nav'>📤 <span>Subir cargas manualmente</span></div>",
+        unsafe_allow_html=True,
+    )
+    with st.expander("Subir Excel o CSV de cargas que no llegaron por correo", expanded=False):
+        fecha_manual = st.date_input(
+            "Fecha de la carga (se guarda como fecha_correo)",
+            value=date.today(),
+            key="upload_fecha",
+        )
+        archivo_manual = st.file_uploader(
+            "Archivo Excel (.xlsx, .xls) o CSV",
+            type=["xlsx", "xls", "csv"],
+            key="upload_archivo",
+        )
+        if archivo_manual is not None:
+            if st.button("⬆️ Subir cargas", type="primary", use_container_width=True, key="btn_subir_cargas"):
+                from ingest_archivo import ingestar_archivo
+                with st.spinner("Procesando archivo..."):
+                    result = ingestar_archivo(
+                        archivo_manual.getvalue(),
+                        archivo_manual.name,
+                        fecha_manual,
+                    )
+                if result["errores"]:
+                    st.error("Errores durante la ingesta:")
+                    for err in result["errores"][:10]:
+                        st.markdown(f"- {err}")
+                    if len(result["errores"]) > 10:
+                        st.caption(f"... y {len(result['errores']) - 10} error(es) más")
+                if result["cargas"] > 0 or result["items"] > 0:
+                    st.success(
+                        f"✅ {result['cargas']} carga(s) y {result['items']} item(s) ingresados "
+                        f"para la fecha {fecha_manual.isoformat()}."
+                    )
+                elif not result["errores"]:
+                    st.warning("No se ingresó ninguna fila (revisá las columnas obligatorias: Nro Carga + Entrega).")
+                if result.get("preview") is not None:
+                    st.caption("Preview (primeras 5 filas del archivo):")
+                    st.dataframe(result["preview"], use_container_width=True)
+
     # ====== Recordatorio ======
     st.write("---")
     st.markdown(
@@ -1385,6 +1431,76 @@ def render_admin():
             st.info("No hay cargas pendientes hoy. No se envió correo.")
 
 
+# ---------- Vista Subir Cargas ----------
+
+def view_subir_cargas():
+    logout_button()
+    header("Subir Cargas", mostrar_atras=True, mostrar_sync=True)
+
+    st.markdown(
+        "<div style='text-align:center;margin:8px 0 20px 0;'>"
+        "<div style='font-size:36px;'>📤</div>"
+        "<div style='font-size:17px;font-weight:700;color:#e8e8ed;'>Subir cargas manualmente</div>"
+        "<div style='font-size:13px;color:rgba(255,255,255,0.45);margin-top:4px;'>"
+        "Para cargas que no llegaron por correo</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    fecha_manual = st.date_input(
+        "Fecha de la carga",
+        value=date.today(),
+        key="subir_fecha",
+    )
+    archivo_manual = st.file_uploader(
+        "Archivo Excel (.xlsx, .xls) o CSV",
+        type=["xlsx", "xls", "csv"],
+        key="subir_archivo",
+    )
+
+    if archivo_manual is not None:
+        if st.button("⬆️ Subir cargas", type="primary", use_container_width=True, key="btn_subir_cargas_view"):
+            from ingest_archivo import ingestar_archivo
+            with st.spinner("Procesando archivo..."):
+                result = ingestar_archivo(
+                    archivo_manual.getvalue(),
+                    archivo_manual.name,
+                    fecha_manual,
+                )
+            if result["errores"]:
+                st.error("Errores durante la ingesta:")
+                for err in result["errores"][:10]:
+                    st.markdown(f"- {err}")
+            if result["cargas"] > 0 or result["items"] > 0:
+                st.success(
+                    f"✅ {result['cargas']} carga(s) y {result['items']} item(s) ingresados "
+                    f"para el {fecha_manual.strftime('%d/%m/%Y')}."
+                )
+                st.markdown(
+                    f"Ahora podés [ver la lista de cargas](#) — "
+                    f"usá el botón de abajo para ir a la fecha correspondiente.",
+                    unsafe_allow_html=False,
+                )
+            elif not result["errores"]:
+                st.warning("No se ingresó ninguna fila. Revisá que el archivo tenga columnas 'Nro Carga' y 'Entrega'.")
+            if result.get("preview") is not None:
+                st.caption("Preview del archivo (primeras 5 filas):")
+                st.dataframe(result["preview"], use_container_width=True)
+    else:
+        st.markdown(
+            "<div style='color:rgba(255,255,255,0.4);font-size:13px;text-align:center;margin-top:12px;'>"
+            "Columnas requeridas: <strong>Nro Carga</strong> + <strong>Entrega</strong><br>"
+            "Opcionales: CD, Anden, Producto, Descripcion, Bultos, Unid, Nombre, Comuna, Región"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.write("---")
+    if st.button("📅 Ir al selector de fecha", use_container_width=True, key="subir_goto_fecha"):
+        st.session_state.view = "selector_fecha"
+        st.rerun()
+
+
 # ---------- Router ----------
 
 if not st.session_state.auth_ok:
@@ -1397,6 +1513,8 @@ elif st.session_state.view == "lista_cargas":
     view_lista_cargas()
 elif st.session_state.view == "detalle":
     view_detalle()
+elif st.session_state.view == "subir_cargas":
+    view_subir_cargas()
 elif st.session_state.view == "admin":
     logout_button()
     header("Panel Supervisor", mostrar_atras=True)
