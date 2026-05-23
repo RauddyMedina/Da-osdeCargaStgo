@@ -85,10 +85,33 @@ def _parse_float(v: Any) -> float | None:
         return None
 
 
+_HEADER_KEYWORDS = {"nro carga", "numero carga", "entrega"}
+
+
+def _find_header_row(df_raw: pd.DataFrame) -> int:
+    """Busca en las primeras 10 filas cuál contiene las columnas reales del Excel.
+
+    Retorna el índice de esa fila, o -1 si ya la fila 0 sirve como header.
+    """
+    for i, row in df_raw.head(10).iterrows():
+        vals = {_strip_accents(str(v)).strip().lower() for v in row.values if pd.notna(v)}
+        if _HEADER_KEYWORDS & vals:
+            return int(i)
+    return -1
+
+
 def _read_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame:
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     if ext in ("xlsx", "xls"):
-        return pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+        # Primera pasada: leer sin asumir header para detectar filas de metadata
+        raw = pd.read_excel(io.BytesIO(file_bytes), header=None, dtype=str)
+        header_row = _find_header_row(raw)
+        if header_row >= 0:
+            # Usar esa fila como nombres de columna
+            df = pd.read_excel(io.BytesIO(file_bytes), header=header_row, dtype=str)
+        else:
+            df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+        return df
     if ext == "csv":
         for sep in (";", ",", "\t"):
             for enc in ("latin-1", "utf-8", "cp1252"):
@@ -98,6 +121,17 @@ def _read_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame:
                         encoding=enc, on_bad_lines="skip",
                     )
                     if df.shape[1] >= 2:
+                        # También detectar header diferido en CSV
+                        raw = pd.read_csv(
+                            io.BytesIO(file_bytes), sep=sep, dtype=str,
+                            encoding=enc, on_bad_lines="skip", header=None,
+                        )
+                        hr = _find_header_row(raw)
+                        if hr > 0:
+                            df = pd.read_csv(
+                                io.BytesIO(file_bytes), sep=sep, dtype=str,
+                                encoding=enc, on_bad_lines="skip", header=hr,
+                            )
                         return df
                 except Exception:
                     continue
