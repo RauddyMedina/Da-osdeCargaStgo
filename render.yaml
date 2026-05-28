@@ -69,6 +69,6 @@ services:
       - key: IMAP_PORT
         value: "993"
       - key: IMAP_FOLDER
-        value: EasyGo
+        value: WMS
       - key: DIAS_VENTANA
         value: "7"

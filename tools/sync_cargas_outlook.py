@@ -38,8 +38,9 @@ from db import (  # noqa: E402
     upsert_carga,
     upsert_item,
 )
+from ingest_archivo import ingestar_archivo  # noqa: E402
 
-FOLDER_NAME = os.getenv("OUTLOOK_FOLDER", "EasyGo")
+FOLDER_NAME = os.getenv("OUTLOOK_FOLDER", "WMS")
 TMP_DIR = PROJECT_ROOT / ".tmp" / "correos_descargados"
 DIAS_VENTANA = int(os.getenv("DIAS_VENTANA", "7"))
 
@@ -93,16 +94,36 @@ def _get_entry_id(msg) -> str:
         return str(msg.ReceivedTime) + str(msg.Subject)
 
 
-def _download_attachment(msg) -> Path | None:
-    """Guarda el primer adjunto Excel/CSV del mensaje. Retorna la ruta o None."""
+def _download_attachment(msg) -> tuple[bytes, str] | None:
+    """Descarga el primer adjunto Excel/CSV/ZIP. Si es ZIP, extrae el primer Excel/CSV.
+    Retorna (file_bytes, filename) o None."""
+    import zipfile, io
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     for i in range(msg.Attachments.Count):
         att = msg.Attachments.Item(i + 1)
         filename = att.FileName or ""
-        if filename.lower().endswith((".csv", ".xlsx", ".xls")):
-            dest = TMP_DIR / filename
-            att.SaveAsFile(str(dest.resolve()))
-            return dest
+        ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+        if ext not in ("csv", "xlsx", "xls", "zip"):
+            continue
+        # Descargar a disco temporal
+        tmp_path = TMP_DIR / filename
+        att.SaveAsFile(str(tmp_path.resolve()))
+        file_bytes = tmp_path.read_bytes()
+        if ext == "zip":
+            # Extraer primer Excel/CSV del ZIP
+            try:
+                with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                    inner = [n for n in z.namelist()
+                             if n.lower().endswith((".xlsx", ".xls", ".csv"))
+                             and not n.startswith("__MACOSX")]
+                    if not inner:
+                        continue
+                    filename = inner[0].rsplit("/", 1)[-1]
+                    file_bytes = z.read(inner[0])
+            except Exception as e:
+                print(f"  ! Error al descomprimir ZIP {att.FileName}: {e}")
+                continue
+        return file_bytes, filename
     return None
 
 
@@ -259,20 +280,24 @@ def main() -> dict:
             marcar_email_procesado(entry_id)
             continue
 
-        path = _download_attachment(msg)
-        if not path:
-            print("  ! Sin adjunto Excel/CSV válido — se omite")
+        result = _download_attachment(msg)
+        if not result:
+            print("  ! Sin adjunto Excel/CSV/ZIP válido — se omite")
             marcar_email_procesado(entry_id)
             continue
 
+        file_bytes, filename = result
+        fecha_correo = _recv_date(msg)
         try:
-            df = _read_dataframe(path)
+            res = ingestar_archivo(file_bytes, filename, fecha_correo)
         except Exception as e:
-            print(f"  ! Error leyendo {path.name}: {e}")
+            print(f"  ! Error ingiriendo {filename}: {e}")
+            marcar_email_procesado(entry_id)
             continue
 
-        fecha_correo = _recv_date(msg)
-        cargas, items_n = _ingestar_df(df, fecha_correo)
+        cargas, items_n = res["cargas"], res["items"]
+        if res.get("errores"):
+            print(f"  ! Errores durante ingesta: {res['errores'][:2]}")
         marcar_email_procesado(entry_id)
         if cargas > 0 or items_n > 0:
             total_cargas += cargas
