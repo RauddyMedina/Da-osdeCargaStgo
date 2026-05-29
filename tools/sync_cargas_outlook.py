@@ -45,7 +45,7 @@ TMP_DIR = PROJECT_ROOT / ".tmp" / "correos_descargados"
 DIAS_VENTANA = int(os.getenv("DIAS_VENTANA", "7"))
 
 SUBJECT_REGEX = re.compile(
-    r"env[ií]o de gu[ií]as de despachos|easy\s*go|detalle\s*carga",
+    r"env[ií]o de gu[ií]as de despachos|easy\s*go|detalle.*carga",
     re.IGNORECASE,
 )
 
@@ -261,29 +261,39 @@ def main() -> dict:
         except Exception:
             recv_dt = datetime.today()
 
+        # Para WMS, solo procesar correos de HOY (siempre renvía el mismo con datos actualizados)
+        if FOLDER_NAME == "WMS" and recv_dt.date() != datetime.today().date():
+            if recv_dt < corte:
+                break
+            continue
+
         if recv_dt < corte:
             break  # más viejos que la ventana → parar
 
         entry_id = _get_entry_id(msg)
-        if email_ya_procesado(entry_id):
+        # Para WMS, permitir reprocesar (ignorar email_ya_procesado)
+        if FOLDER_NAME != "WMS" and email_ya_procesado(entry_id):
             continue
 
         subject = msg.Subject or ""
         if not SUBJECT_REGEX.search(subject):
-            marcar_email_procesado(entry_id)
+            if FOLDER_NAME != "WMS":
+                marcar_email_procesado(entry_id)
             continue
 
         print(f"\nProcesando: {subject!r}")
 
         if msg.Attachments.Count == 0:
             print("  ! Sin adjuntos — se omite")
-            marcar_email_procesado(entry_id)
+            if FOLDER_NAME != "WMS":
+                marcar_email_procesado(entry_id)
             continue
 
         result = _download_attachment(msg)
         if not result:
             print("  ! Sin adjunto Excel/CSV/ZIP válido — se omite")
-            marcar_email_procesado(entry_id)
+            if FOLDER_NAME != "WMS":
+                marcar_email_procesado(entry_id)
             continue
 
         file_bytes, filename = result
@@ -292,13 +302,16 @@ def main() -> dict:
             res = ingestar_archivo(file_bytes, filename, fecha_correo)
         except Exception as e:
             print(f"  ! Error ingiriendo {filename}: {e}")
-            marcar_email_procesado(entry_id)
+            if FOLDER_NAME != "WMS":
+                marcar_email_procesado(entry_id)
             continue
 
         cargas, items_n = res["cargas"], res["items"]
         if res.get("errores"):
             print(f"  ! Errores durante ingesta: {res['errores'][:2]}")
-        marcar_email_procesado(entry_id)
+        # Para WMS, no marcar como procesado (permite reprocesar si llega actualizacion del mismo día)
+        if FOLDER_NAME != "WMS":
+            marcar_email_procesado(entry_id)
         if cargas > 0 or items_n > 0:
             total_cargas += cargas
             total_items += items_n
