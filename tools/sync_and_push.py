@@ -19,7 +19,7 @@ import json
 import os
 import sqlite3
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -42,21 +42,35 @@ DIAS_PUSH = int(os.getenv("DIAS_PUSH", "2"))
 LOCAL_DB = PROJECT_ROOT / "data" / "declaracion.db"
 
 
-def _gather_payload() -> dict:
-    """Lee cargas+items del DB local de los últimos DIAS_PUSH días."""
+def _gather_payload(fecha=None) -> dict:
+    """Lee cargas+items del DB local.
+
+    fecha: date | None — si se da, filtra por esa fecha exacta;
+           si no, usa los últimos DIAS_PUSH días.
+    """
     if not LOCAL_DB.exists():
         return {"cargas": [], "items": []}
     conn = sqlite3.connect(LOCAL_DB)
     conn.row_factory = sqlite3.Row
-    desde = (date.today() - timedelta(days=DIAS_PUSH)).isoformat()
-    cargas = [
-        dict(r)
-        for r in conn.execute(
-            "SELECT numero_carga, fecha_correo, cd, anden FROM cargas "
-            "WHERE fecha_correo >= ?",
-            (desde,),
-        )
-    ]
+    if fecha is not None:
+        cargas = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT numero_carga, fecha_correo, cd, anden FROM cargas "
+                "WHERE fecha_correo = ?",
+                (fecha.isoformat(),),
+            )
+        ]
+    else:
+        desde = (date.today() - timedelta(days=DIAS_PUSH)).isoformat()
+        cargas = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT numero_carga, fecha_correo, cd, anden FROM cargas "
+                "WHERE fecha_correo >= ?",
+                (desde,),
+            )
+        ]
     if not cargas:
         conn.close()
         return {"cargas": [], "items": []}
@@ -75,11 +89,31 @@ def _gather_payload() -> dict:
     return {"cargas": cargas, "items": items}
 
 
-def main() -> dict:
+def _parse_fecha(args) -> date | None:
+    """Parsea --fecha DD-MM-YYYY de los argumentos. Vacío/ausente → None (HOY)."""
+    val = None
+    for i, a in enumerate(args):
+        if a == "--fecha" and i + 1 < len(args):
+            val = args[i + 1].strip()
+            break
+        if a.startswith("--fecha="):
+            val = a.split("=", 1)[1].strip()
+            break
+    if not val:
+        return None
+    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(val, fmt).date()
+        except ValueError:
+            continue
+    sys.exit(f"ERROR: fecha inválida '{val}'. Usa formato DD-MM-YYYY (ej: 01-06-2026).")
+
+
+def main(fecha=None) -> dict:
     # 1) Sync local con Outlook Desktop COM
     print(">> Sync Outlook local...")
     try:
-        outlook_sync()
+        outlook_sync(fecha=fecha)
     except SystemExit as e:
         print(f"!! Outlook sync abortó: {e}")
     except Exception as e:
@@ -93,7 +127,7 @@ def main() -> dict:
         )
 
     # 3) Empujar a Render
-    payload = _gather_payload()
+    payload = _gather_payload(fecha=fecha)
     print(
         f">> Empujando a {RENDER_URL}: "
         f"{len(payload['cargas'])} cargas, {len(payload['items'])} items"
@@ -118,4 +152,5 @@ def main() -> dict:
 
 
 if __name__ == "__main__":
-    main()
+    fecha_arg = _parse_fecha(sys.argv[1:])
+    main(fecha=fecha_arg)

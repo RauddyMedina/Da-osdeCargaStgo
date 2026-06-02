@@ -218,9 +218,22 @@ def _ingestar_df(df: pd.DataFrame, fecha_correo) -> tuple[int, int]:
     return len(cargas_vistas), items_count
 
 
-def main() -> dict:
+def main(fecha=None) -> dict:
+    """Sincroniza cargas desde Outlook.
+
+    fecha: date | None — fecha objetivo a sincronizar.
+      - None → HOY.
+      - Para WMS: procesa SOLO el correo más reciente de esa fecha
+        (WMS reenvía la misma data acumulada del día, basta uno).
+    """
+    from datetime import date as _date
+
     init_db()
     TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    target = fecha or _date.today()
+    es_wms = FOLDER_NAME == "WMS"
+    print(f"Fecha objetivo: {target.isoformat()}")
 
     print("Conectando con Outlook Desktop...")
     outlook = _get_outlook()
@@ -242,10 +255,6 @@ def main() -> dict:
     except Exception:
         pass
 
-    corte = datetime.today().replace(
-        hour=0, minute=0, second=0, microsecond=0
-    ) - __import__("datetime").timedelta(days=DIAS_VENTANA - 1)
-
     total_cargas = 0
     total_items = 0
     procesados = 0
@@ -253,25 +262,27 @@ def main() -> dict:
     for i in range(items.Count):
         msg = items.Item(i + 1)
         try:
-            recv_dt = datetime(
+            recv_date = _date(
                 msg.ReceivedTime.year,
                 msg.ReceivedTime.month,
                 msg.ReceivedTime.day,
             )
         except Exception:
-            recv_dt = datetime.today()
+            recv_date = _date.today()
 
-        if recv_dt < corte:
-            break  # más viejos que la ventana → parar
+        # Filtrar por la fecha objetivo (correos ordenados DESC)
+        if recv_date > target:
+            continue  # más nuevo que el objetivo → saltar
+        if recv_date < target:
+            break  # más viejo que el objetivo → parar
 
         entry_id = _get_entry_id(msg)
-        # Para WMS, permitir reprocesar (ignorar email_ya_procesado)
-        if FOLDER_NAME != "WMS" and email_ya_procesado(entry_id):
+        if not es_wms and email_ya_procesado(entry_id):
             continue
 
         subject = msg.Subject or ""
         if not SUBJECT_REGEX.search(subject):
-            if FOLDER_NAME != "WMS":
+            if not es_wms:
                 marcar_email_procesado(entry_id)
             continue
 
@@ -279,14 +290,14 @@ def main() -> dict:
 
         if msg.Attachments.Count == 0:
             print("  ! Sin adjuntos — se omite")
-            if FOLDER_NAME != "WMS":
+            if not es_wms:
                 marcar_email_procesado(entry_id)
             continue
 
         result = _download_attachment(msg)
         if not result:
             print("  ! Sin adjunto Excel/CSV/ZIP válido — se omite")
-            if FOLDER_NAME != "WMS":
+            if not es_wms:
                 marcar_email_procesado(entry_id)
             continue
 
@@ -296,21 +307,24 @@ def main() -> dict:
             res = ingestar_archivo(file_bytes, filename, fecha_correo)
         except Exception as e:
             print(f"  ! Error ingiriendo {filename}: {e}")
-            if FOLDER_NAME != "WMS":
+            if not es_wms:
                 marcar_email_procesado(entry_id)
             continue
 
         cargas, items_n = res["cargas"], res["items"]
         if res.get("errores"):
             print(f"  ! Errores durante ingesta: {res['errores'][:2]}")
-        # Para WMS, no marcar como procesado (permite reprocesar si llega actualizacion del mismo día)
-        if FOLDER_NAME != "WMS":
+        if not es_wms:
             marcar_email_procesado(entry_id)
         if cargas > 0 or items_n > 0:
             total_cargas += cargas
             total_items += items_n
             procesados += 1
             print(f"  OK {cargas} carga(s), {items_n} item(s) (fecha={fecha_correo})")
+
+        # Para WMS: el correo más reciente de la fecha ya tiene toda la data → parar
+        if es_wms and (cargas > 0 or items_n > 0):
+            break
 
     summary = {
         "correos_procesados": procesados,
