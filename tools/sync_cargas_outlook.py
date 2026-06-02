@@ -261,12 +261,6 @@ def main() -> dict:
         except Exception:
             recv_dt = datetime.today()
 
-        # Para WMS, solo procesar correos de HOY (siempre renvía el mismo con datos actualizados)
-        if FOLDER_NAME == "WMS" and recv_dt.date() != datetime.today().date():
-            if recv_dt < corte:
-                break
-            continue
-
         if recv_dt < corte:
             break  # más viejos que la ventana → parar
 
