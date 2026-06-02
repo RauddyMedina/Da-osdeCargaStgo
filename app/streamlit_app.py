@@ -1019,72 +1019,68 @@ def view_detalle():
                     eliminar_dano(nc, entrega)
                     st.rerun()
 
-    # ====== PASO 2: Fotos (después de declarar todos los daños) ======
-    st.write("---")
-    st.markdown(
-        f"<div class='date-nav'>📷 <span>Paso 2: Fotos</span> de la hoja física ({len(fotos)})</div>",
-        unsafe_allow_html=True,
-    )
-    st.caption("Una vez declarados los daños de todas las entregas, sube las fotos aquí.")
+    # ====== PASO 2: Fotos (ocultas por defecto) ======
+    with st.expander(f"📷 Fotos de respaldo ({len(fotos)})", expanded=False):
+        st.caption("Opcional: sube fotos de la hoja física como respaldo.")
 
-    if not bloqueado:
-        # Opción A: adjuntar desde galería (multi-archivo) con botón explícito de "Subir"
-        upload_seed_key = f"upload_seed_{nc}"
-        if upload_seed_key not in st.session_state:
-            st.session_state[upload_seed_key] = 0
+        if not bloqueado:
+            # Opción A: adjuntar desde galería (multi-archivo) con botón explícito de "Subir"
+            upload_seed_key = f"upload_seed_{nc}"
+            if upload_seed_key not in st.session_state:
+                st.session_state[upload_seed_key] = 0
 
-        uploaded = st.file_uploader(
-            "📁 Adjuntar fotos desde el celular",
-            type=["jpg", "jpeg", "png", "heic", "heif", "webp"],
-            accept_multiple_files=True,
-            key=f"upload_{nc}_{st.session_state[upload_seed_key]}",
-            help="Selecciona una o varias fotos de la galería",
-        )
-        if uploaded:
-            if st.button(
-                f"⬆️ Subir {len(uploaded)} foto(s)",
-                key=f"do_upload_{nc}",
-                type="primary",
-                use_container_width=True,
-            ):
-                for f in uploaded:
+            uploaded = st.file_uploader(
+                "📁 Adjuntar fotos desde el celular",
+                type=["jpg", "jpeg", "png", "heic", "heif", "webp"],
+                accept_multiple_files=True,
+                key=f"upload_{nc}_{st.session_state[upload_seed_key]}",
+                help="Selecciona una o varias fotos de la galería",
+            )
+            if uploaded:
+                if st.button(
+                    f"⬆️ Subir {len(uploaded)} foto(s)",
+                    key=f"do_upload_{nc}",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    for f in uploaded:
+                        uid = uuid.uuid4().hex[:8]
+                        ext = Path(f.name).suffix.lower() or ".jpg"
+                        filename = f"CARGA_{nc}_{uid}{ext}"
+                        ruta = FOTOS_DIR / filename
+                        ruta.write_bytes(f.getbuffer())
+                        agregar_foto(nc, str(ruta.relative_to(DATA_DIR)), st.session_state.usuario)
+                    st.session_state[upload_seed_key] += 1  # resetea uploader
+                    st.rerun()
+
+            # Opción B: tomar foto con la cámara del dispositivo (solo se activa al pulsar el botón)
+            cam_key = f"cam_active_{nc}"
+            if cam_key not in st.session_state:
+                st.session_state[cam_key] = False
+
+            if not st.session_state[cam_key]:
+                if st.button("📷 Activar cámara para tomar foto", key=f"cam_btn_{nc}", use_container_width=True):
+                    st.session_state[cam_key] = True
+                    st.rerun()
+            else:
+                col_cam, col_close = st.columns([5, 1])
+                with col_close:
+                    if st.button("✕", key=f"cam_close_{nc}", help="Cerrar cámara", use_container_width=True):
+                        st.session_state[cam_key] = False
+                        st.rerun()
+                foto = st.camera_input("Tomar foto", key=f"cam_{nc}", label_visibility="collapsed")
+                if foto is not None:
                     uid = uuid.uuid4().hex[:8]
-                    ext = Path(f.name).suffix.lower() or ".jpg"
-                    filename = f"CARGA_{nc}_{uid}{ext}"
+                    filename = f"CARGA_{nc}_{uid}.jpg"
                     ruta = FOTOS_DIR / filename
-                    ruta.write_bytes(f.getbuffer())
+                    ruta.write_bytes(foto.getbuffer())
                     agregar_foto(nc, str(ruta.relative_to(DATA_DIR)), st.session_state.usuario)
-                st.session_state[upload_seed_key] += 1  # resetea uploader
-                st.rerun()
-
-        # Opción B: tomar foto con la cámara del dispositivo (solo se activa al pulsar el botón)
-        cam_key = f"cam_active_{nc}"
-        if cam_key not in st.session_state:
-            st.session_state[cam_key] = False
-
-        if not st.session_state[cam_key]:
-            if st.button("📷 Activar cámara para tomar foto", key=f"cam_btn_{nc}", use_container_width=True):
-                st.session_state[cam_key] = True
-                st.rerun()
-        else:
-            col_cam, col_close = st.columns([5, 1])
-            with col_close:
-                if st.button("✕", key=f"cam_close_{nc}", help="Cerrar cámara", use_container_width=True):
                     st.session_state[cam_key] = False
                     st.rerun()
-            foto = st.camera_input("Tomar foto", key=f"cam_{nc}", label_visibility="collapsed")
-            if foto is not None:
-                uid = uuid.uuid4().hex[:8]
-                filename = f"CARGA_{nc}_{uid}.jpg"
-                ruta = FOTOS_DIR / filename
-                ruta.write_bytes(foto.getbuffer())
-                agregar_foto(nc, str(ruta.relative_to(DATA_DIR)), st.session_state.usuario)
-                st.session_state[cam_key] = False
-                st.rerun()
 
-    # Galería de fotos ya cargadas (colapsada por defecto)
-    if fotos:
-        with st.expander(f"🖼️ Ver fotos cargadas ({len(fotos)})", expanded=False):
+        # Galería de fotos ya cargadas
+        if fotos:
+            st.write("---")
             cols = st.columns(min(3, len(fotos)))
             for i, f in enumerate(fotos):
                 with cols[i % 3]:
@@ -1101,31 +1097,18 @@ def view_detalle():
                             if p.exists():
                                 p.unlink()
                         st.rerun()
-    else:
-        st.markdown(
-            "<div class='carga-card' style='text-align:center;padding:24px 20px;'>"
-            "<div style='font-size:36px;margin-bottom:8px;'>📸</div>"
-            "<div style='color:rgba(255,255,255,0.4);font-size:13px;'>"
-            "Aún no hay fotos — adjunta desde galería o toma con la cámara</div></div>",
-            unsafe_allow_html=True,
-        )
 
     # Footer: botones de finalización
     if carga["estado"] == "por_declarar":
         st.write("---")
-        n_fotos = len(fotos)
         n_danos = total_danos
 
         c1, c2 = st.columns(2)
         with c1:
-            disabled_danos = n_danos == 0 or n_fotos < MIN_FOTOS
-            help_danos = None
-            if n_danos == 0:
-                help_danos = "Declara al menos 1 daño"
-            elif n_fotos < MIN_FOTOS:
-                help_danos = f"Sube al menos {MIN_FOTOS} foto"
+            disabled_danos = n_danos == 0
+            help_danos = "Declara al menos 1 daño" if n_danos == 0 else None
             if st.button(
-                f"📤 Enviar daños de Carga {nc}",
+                f"📤 Finalizar con daños",
                 type="primary",
                 disabled=disabled_danos,
                 help=help_danos,
@@ -1136,12 +1119,8 @@ def view_detalle():
                 st.rerun()
 
         with c2:
-            disabled_sin = n_danos > 0 or n_fotos < MIN_FOTOS
-            help_sin = None
-            if n_danos > 0:
-                help_sin = "Hay daños declarados — usa el otro botón"
-            elif n_fotos < MIN_FOTOS:
-                help_sin = f"Sube al menos {MIN_FOTOS} foto"
+            disabled_sin = n_danos > 0
+            help_sin = "Hay daños declarados — usa el otro botón" if n_danos > 0 else None
 
             confirm_key = f"confirm_sd_{nc}"
             if st.session_state.get(confirm_key):
@@ -1166,6 +1145,22 @@ def view_detalle():
                 ):
                     st.session_state[confirm_key] = True
                     st.rerun()
+
+    # Botón de envío de correo para cargas finalizadas con daños pendientes de envío
+    if (carga.get("estado") == "finalizada"
+            and not carga.get("sin_danos")
+            and not carga.get("enviada_at")):
+        st.write("---")
+        if st.button("📧 Enviar reporte de daños por correo", type="primary", use_container_width=True, key=f"send_email_{nc}"):
+            with st.spinner("Enviando correo..."):
+                try:
+                    from send_consolidado_email import main as _send_email
+                    result = _send_email(mode="send")
+                    n_env = result.get("enviadas", 0)
+                    st.success(f"Correo enviado con {n_env} carga(s) — revisa tu bandeja enviados.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al enviar: {e}")
 
 
 def finalizar_y_appendear(numero_carga: str, sin_danos: bool) -> None:
