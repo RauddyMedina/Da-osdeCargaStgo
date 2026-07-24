@@ -50,14 +50,18 @@ SUBJECT_REGEX = re.compile(
 )
 
 
+class OutlookNoDisponible(RuntimeError):
+    """Outlook Desktop no está disponible (no instalado/abierto)."""
+
+
 def _get_outlook():
     try:
         import win32com.client
         return win32com.client.Dispatch("Outlook.Application")
     except Exception as e:
-        sys.exit(
-            "ERROR: No se pudo conectar con Outlook Desktop.\n"
-            "Asegurate de que Outlook esté instalado y abierto.\n"
+        raise OutlookNoDisponible(
+            "No se pudo conectar con Outlook Desktop. "
+            "Asegurate de que Outlook esté instalado y abierto. "
             f"Detalle: {e}"
         )
 
@@ -125,6 +129,37 @@ def _download_attachment(msg) -> tuple[bytes, str] | None:
                 continue
         return file_bytes, filename
     return None
+
+
+def _iter_attachments(msg):
+    """Genera (file_bytes, filename) por CADA adjunto válido (Excel/CSV/ZIP) del correo.
+
+    A diferencia de _download_attachment (que devuelve solo el primero), recorre todos
+    los adjuntos. Necesario cuando un correo trae varias cargas como adjuntos separados.
+    """
+    import zipfile, io
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    for i in range(msg.Attachments.Count):
+        att = msg.Attachments.Item(i + 1)
+        filename = att.FileName or ""
+        ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+        if ext not in ("csv", "xlsx", "xls", "zip"):
+            continue
+        tmp_path = TMP_DIR / filename
+        att.SaveAsFile(str(tmp_path.resolve()))
+        file_bytes = tmp_path.read_bytes()
+        if ext == "zip":
+            try:
+                with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                    inner = [n for n in z.namelist()
+                             if n.lower().endswith((".xlsx", ".xls", ".csv"))
+                             and not n.startswith("__MACOSX")]
+                    for n in inner:
+                        yield z.read(n), n.rsplit("/", 1)[-1]
+            except Exception as e:
+                print(f"  ! Error al descomprimir ZIP {att.FileName}: {e}")
+            continue
+        yield file_bytes, filename
 
 
 def _read_dataframe(path: Path) -> pd.DataFrame:
@@ -333,6 +368,65 @@ def main(fecha=None) -> dict:
     }
     print(f"\nResumen: {summary}")
     return summary
+
+
+def iter_adjuntos_fecha(fecha=None):
+    """Genera (file_bytes, filename, fecha_correo) de los adjuntos del ÚLTIMO correo
+    WMS de la fecha objetivo.
+
+    Reutiliza la misma lógica de escaneo/filtrado que main() (carpeta OUTLOOK_FOLDER,
+    SUBJECT_REGEX, filtro por fecha, orden DESC). Como los correos WMS son acumulativos
+    (el último del día ya trae todas las cargas), para `es_wms` se detiene en el primer
+    correo (= más reciente) con adjunto(s) válido(s) — igual que main().
+
+    Lanza OutlookNoDisponible si Outlook no está accesible.
+    """
+    from datetime import date as _date
+
+    target = fecha or _date.today()
+    es_wms = FOLDER_NAME == "WMS"
+
+    outlook = _get_outlook()
+    folder = _find_folder(outlook, FOLDER_NAME)
+    if folder is None:
+        raise OutlookNoDisponible(f"carpeta '{FOLDER_NAME}' no encontrada en Outlook.")
+
+    items = folder.Items
+    try:
+        items.Sort("[ReceivedTime]", True)  # descendente
+    except Exception:
+        pass
+
+    for i in range(items.Count):
+        msg = items.Item(i + 1)
+        try:
+            recv_date = _date(
+                msg.ReceivedTime.year, msg.ReceivedTime.month, msg.ReceivedTime.day
+            )
+        except Exception:
+            recv_date = _date.today()
+
+        if recv_date > target:
+            continue
+        if recv_date < target:
+            break
+
+        subject = msg.Subject or ""
+        if not SUBJECT_REGEX.search(subject):
+            continue
+        if msg.Attachments.Count == 0:
+            continue
+
+        fecha_correo = _recv_date(msg)
+        rindio = False
+        for file_bytes, filename in _iter_attachments(msg):
+            rindio = True
+            yield file_bytes, filename, fecha_correo
+        # Correos WMS acumulativos: el más reciente del día ya trae todo. Tomamos
+        # sus adjuntos y cortamos (igual que main). Si este correo no rindió adjuntos
+        # válidos, seguimos al siguiente (no cortar en vacío).
+        if es_wms and rindio:
+            break
 
 
 if __name__ == "__main__":

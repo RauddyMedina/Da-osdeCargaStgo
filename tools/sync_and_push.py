@@ -119,6 +119,26 @@ def main(fecha=None) -> dict:
     except Exception as e:
         print(f"!! Error en Outlook sync: {e}")
 
+    # 1b) Push al Google Sheet 'BASE DE DATOS WMS' + pestaña Easy (best-effort,
+    #     independiente de Render: no debe romper el flujo aunque falle).
+    #     SOLO WMS: el OPL se sube por su panel aparte ("Subir OPL.bat" → opl_panel.py),
+    #     bajo python.exe (bajo pythonw el append de OPL falla en silencio).
+    try:
+        from push_to_wms_sheet import push_y_easy
+        rc_sheet = push_y_easy(fecha=fecha, do_opl=False, do_wms=True)
+        if rc_sheet:
+            print(f"!! Push a Google Sheet WMS / Easy terminó con código {rc_sheet} — "
+                  "'Que va quedando Easy' pudo quedar sin actualizar.")
+    except Exception as e:
+        print(f"!! Push a Google Sheet WMS / Easy falló (no crítico): {e}")
+        # Sin esto el panel se queda sin ##SUMMARY## y muestra "Listo ✓" aunque el sheet
+        # no se haya tocado. Este summary de emergencia pinta FILAS WMS en rojo.
+        print("##SUMMARY## " + json.dumps({
+            "cargas": 0, "entregas": 0, "filas": 0,
+            "opl_filas": 0, "opl_subordenes": 0,
+            "opl_error": False, "wms_error": True, "dry_run": False,
+        }))
+
     # 2) Validar config para push
     if not RENDER_URL or not UPLOAD_TOKEN:
         sys.exit(
