@@ -1288,6 +1288,89 @@ def render_admin():
         except Exception as e:
             st.error(f"Error generando modelo de correo: {e}")
 
+    # ====== Correo de una fecha específica (re-generar cualquier día) ======
+    st.write("---")
+    st.markdown(
+        "<div class='date-nav'>📅 <span>Correo de una fecha específica</span></div>",
+        unsafe_allow_html=True,
+    )
+    try:
+        from db import listar_fechas_con_cargas, listar_cargas_por_fecha
+        from datetime import date as _d
+
+        fechas_disp = listar_fechas_con_cargas()
+        if not fechas_disp:
+            st.info("No hay fechas con cargas.")
+        else:
+            _fsel_def = st.session_state.get("fecha_sel")
+            _idx = (
+                fechas_disp.index(_fsel_def.isoformat())
+                if _fsel_def and _fsel_def.isoformat() in fechas_disp
+                else 0
+            )
+            fsel = st.selectbox(
+                "Fecha del correo (fecha del TIM)", fechas_disp, index=_idx, key="admin_correo_fecha"
+            )
+            fdate = _d.fromisoformat(fsel)
+            fstr = fdate.strftime("%d-%m-%Y")
+
+            cargas_cd = []
+            for row in listar_cargas_por_fecha(fdate):
+                c = dict(row)
+                if c.get("sin_danos"):
+                    continue
+                dd = listar_danos_de_carga(c["numero_carga"])
+                if dd:
+                    cargas_cd.append((c["numero_carga"], dd))
+
+            if not cargas_cd:
+                st.info(f"El {fstr} no tiene cargas con daños declarados.")
+            else:
+                asunto2 = f"Respaldo de Productos declarados con daños de embalaje en andenes {fstr}"
+                bloques2 = []
+                for nc, dd in cargas_cd:
+                    filas = "".join(
+                        f"<tr><td style='border:1px solid #444;padding:4px 8px;'>{entrega}</td>"
+                        f"<td style='border:1px solid #444;padding:4px 8px;'>"
+                        f"{' / '.join(str(x['tipo_dano']) for x in dd[entrega])}</td></tr>"
+                        for entrega in sorted(dd.keys())
+                    )
+                    bloques2.append(
+                        '<table style="border-collapse:collapse;margin-bottom:18px;'
+                        'font-family:Arial,sans-serif;font-size:13px;">'
+                        f'<tr><td style="background:#a9d08e;font-weight:bold;padding:6px 12px;'
+                        f'border:1px solid #444;width:140px;">{fstr}</td>'
+                        f'<td style="background:#a9d08e;font-weight:bold;padding:6px 12px;'
+                        f'border:1px solid #444;">CARGA:{nc}</td></tr>'
+                        '<tr><td style="background:#a9d08e;font-weight:bold;padding:4px 8px;'
+                        'border:1px solid #444;">OP/CL</td>'
+                        '<td style="background:#a9d08e;font-weight:bold;padding:4px 8px;'
+                        'border:1px solid #444;">DAÑO</td></tr>'
+                        f'{filas}</table>'
+                    )
+                html2 = (
+                    "<div style='font-family:Arial,sans-serif;font-size:13px;'>"
+                    "<p>Estimados,</p>"
+                    "<p>A continuación, le envío los respaldos de productos identificados "
+                    "con daños de embalaje en andenes:</p>"
+                    + "".join(bloques2)
+                    + "<p>Adjunto fotos de las hojas de carga físicas como respaldo.</p>"
+                    "<p>Saludos cordiales.</p></div>"
+                )
+                st.info(
+                    "Seleccioná la tabla de abajo, copiá (Ctrl+C) y pegá en Outlook (Ctrl+V) — "
+                    "mantiene el formato. Sirve para re-armar el correo de un día ya enviado."
+                )
+                st.markdown(f"**Asunto:** `{asunto2}`")
+                st.markdown(
+                    "<div style='background:white;padding:16px;border-radius:8px;color:#000;'>"
+                    + html2
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
+    except Exception as e:
+        st.error(f"Error generando correo por fecha: {e}")
+
     # ====== Mantenimiento ======
     st.write("---")
     st.markdown(
