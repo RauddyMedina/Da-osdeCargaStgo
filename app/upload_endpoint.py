@@ -51,6 +51,38 @@ def _handle_import(payload: dict) -> dict:
     return {"ok": True, "cargas": n_c, "items": n_i}
 
 
+def _handle_export(fecha_iso: str) -> dict:
+    """SOLO LECTURA: cargas + daños declarados de una fecha (fecha_correo).
+
+    Sirve para re-armar el correo consolidado de un día ya enviado, sin tocar
+    ningún estado. No modifica nada en la base.
+    """
+    from datetime import date as _date
+    from db import init_db, listar_cargas_por_fecha, listar_danos_de_carga
+    init_db()
+    f = _date.fromisoformat(fecha_iso)
+    cargas = []
+    for row in listar_cargas_por_fecha(f):
+        c = dict(row)
+        nc = c["numero_carga"]
+        danos_dict = listar_danos_de_carga(nc)
+        danos = [
+            {"entrega": entrega, "tipo_dano": d["tipo_dano"]}
+            for entrega in sorted(danos_dict.keys())
+            for d in danos_dict[entrega]
+        ]
+        cargas.append({
+            "numero_carga": nc,
+            "cd": c.get("cd"),
+            "anden": c.get("anden"),
+            "estado": c.get("estado"),
+            "sin_danos": c.get("sin_danos"),
+            "finalizada_por": c.get("finalizada_por"),
+            "danos": danos,
+        })
+    return {"ok": True, "fecha": fecha_iso, "cargas": cargas}
+
+
 # ─── Starlette handler (Render / uvicorn) ─────────────────────────────────────
 
 async def _starlette_import(request):
@@ -61,6 +93,19 @@ async def _starlette_import(request):
     try:
         payload = await request.json()
         result = _handle_import(payload)
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
+async def _starlette_export(request):
+    from starlette.responses import JSONResponse
+    auth = request.headers.get("Authorization", "")
+    if not UPLOAD_TOKEN or auth != f"Bearer {UPLOAD_TOKEN}":
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    try:
+        fecha = request.query_params.get("fecha", "")
+        result = _handle_export(fecha)
         return JSONResponse(result)
     except Exception as e:
         return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
@@ -79,8 +124,8 @@ def _install_starlette() -> bool:
 
         def patched(runtime):
             routes = original(runtime)
-            new_route = Route("/api/import", _starlette_import, methods=["POST"])
-            routes.insert(0, new_route)
+            routes.insert(0, Route("/api/import", _starlette_import, methods=["POST"]))
+            routes.insert(0, Route("/api/export", _starlette_export, methods=["GET"]))
             return routes
 
         sa.create_streamlit_routes = patched
