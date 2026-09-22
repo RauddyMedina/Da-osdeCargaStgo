@@ -1,7 +1,9 @@
 """Sync Outlook local + push a Render. Pensado para Windows Task Scheduler.
 
 Flujo:
-  1. Corre sync_cargas_outlook.main() (Outlook COM) → actualiza DB local.
+  1. Baja UNA vez los adjuntos del último correo WMS de la fecha (Outlook COM) y los
+     ingiere en el DB local. Esos MISMOS adjuntos se le pasan al push del Google Sheet,
+     así ambos leen el mismo correo (ver _bajar_adjuntos).
   2. Lee cargas+items recientes del DB local.
   3. POST a https://<app>.onrender.com/api/import con Bearer token.
 
@@ -33,7 +35,8 @@ load_dotenv(PARENT_ROOT / ".env")
 
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 
-from sync_cargas_outlook import main as outlook_sync  # noqa: E402
+from ingest_archivo import ingestar_archivo  # noqa: E402
+from sync_cargas_outlook import OutlookNoDisponible, iter_adjuntos_fecha  # noqa: E402
 
 RENDER_URL = os.getenv("RENDER_UPLOAD_URL", "")
 UPLOAD_TOKEN = os.getenv("UPLOAD_TOKEN", "")
@@ -109,15 +112,38 @@ def _parse_fecha(args) -> date | None:
     sys.exit(f"ERROR: fecha inválida '{val}'. Usa formato DD-MM-YYYY (ej: 01-06-2026).")
 
 
-def main(fecha=None) -> dict:
-    # 1) Sync local con Outlook Desktop COM
-    print(">> Sync Outlook local...")
+def _bajar_adjuntos(fecha) -> list:
+    """Baja UNA sola vez los adjuntos del último correo WMS de la fecha.
+
+    Un solo escaneo de Outlook para los dos consumidores (base de daños y Google Sheet).
+    Antes cada uno escaneaba por su cuenta, con ~1 min de diferencia: el 2026-08-07 llegó
+    un correo WMS entre medio y cada escaneo leyó un adjunto distinto (sheet 5 cargas,
+    base de daños 3 → esas 2 cargas nunca se pudieron declarar).
+    """
     try:
-        outlook_sync(fecha=fecha)
-    except SystemExit as e:
-        print(f"!! Outlook sync abortó: {e}")
+        return list(iter_adjuntos_fecha(fecha))
+    except OutlookNoDisponible as e:
+        print(f"!! Outlook no disponible: {e}")
+        return []
     except Exception as e:
-        print(f"!! Error en Outlook sync: {e}")
+        print(f"!! Error bajando adjuntos de Outlook: {e}")
+        return []
+
+
+def main(fecha=None) -> dict:
+    # 1) Un solo escaneo de Outlook → los mismos adjuntos alimentan BD local y sheet.
+    print(">> Sync Outlook local...")
+    adjuntos = _bajar_adjuntos(fecha)
+    for file_bytes, filename, fecha_correo in adjuntos:
+        try:
+            res = ingestar_archivo(file_bytes, filename, fecha_correo)
+        except Exception as e:
+            print(f"!! Error ingiriendo {filename}: {e}")
+            continue
+        if res.get("errores"):
+            print(f"  ! Errores durante ingesta: {res['errores'][:2]}")
+        print(f"  OK {filename}: {res['cargas']} carga(s), {res['items']} item(s) "
+              f"(fecha={fecha_correo})")
 
     # 1b) Push al Google Sheet 'BASE DE DATOS WMS' + pestaña Easy (best-effort,
     #     independiente de Render: no debe romper el flujo aunque falle).
@@ -125,7 +151,7 @@ def main(fecha=None) -> dict:
     #     bajo python.exe (bajo pythonw el append de OPL falla en silencio).
     try:
         from push_to_wms_sheet import push_y_easy
-        rc_sheet = push_y_easy(fecha=fecha, do_opl=False, do_wms=True)
+        rc_sheet = push_y_easy(fecha=fecha, do_opl=False, do_wms=True, adjuntos=adjuntos)
         if rc_sheet:
             print(f"!! Push a Google Sheet WMS / Easy terminó con código {rc_sheet} — "
                   "'Que va quedando Easy' pudo quedar sin actualizar.")

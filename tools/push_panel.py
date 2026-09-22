@@ -22,13 +22,15 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import messagebox, scrolledtext
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PUSH_SCRIPT = PROJECT_ROOT / "tools" / "push_to_wms_sheet.py"   # solo sheet + Easy (preview)
 SYNC_SCRIPT = PROJECT_ROOT / "tools" / "sync_and_push.py"        # flujo completo + Render (subir real)
+LOG_PATH = PROJECT_ROOT / "logs" / "push_wms.log"
+LOG_MAX = 2_000_000   # bytes; al pasarse, el log vigente se archiva como push_wms.1.log
 
 
 def _console_python() -> str:
@@ -69,6 +71,7 @@ class PushPanel:
         self.proc: subprocess.Popen | None = None
         self.running = False
         self._wms_error = False
+        self.logf = None
 
         root.title("PUSH WMS SHEET")
         root.configure(bg=BG)
@@ -163,6 +166,50 @@ class PushPanel:
         self.footer.pack(fill="x", padx=18, pady=(0, 10))
 
     # ── Log helpers ─────────────────────────────────────────────────────────────
+    def _log_abrir(self, cmd, dry_run: bool, fecha: str):
+        """Abre el log en disco de esta corrida.
+
+        Es la ÚNICA memoria de lo que pasó: la ventana se borra al empezar cada run y se
+        pierde al cerrar el panel. El 2026-08-31 el push dejó 'Que va quedando Easy' sin
+        cargar y no quedó rastro del error. Nunca rompe la corrida si el log falla.
+        """
+        self.logf = None
+        try:
+            LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            # ponytail: rotación de UNA generación por tamaño. Techo: si un solo run pasa
+            # LOG_MAX se pierde el archivo anterior; para más historia, cambiar a
+            # logging.handlers.RotatingFileHandler(backupCount=N).
+            if LOG_PATH.exists() and LOG_PATH.stat().st_size > LOG_MAX:
+                LOG_PATH.replace(LOG_PATH.with_name("push_wms.1.log"))
+            self.logf = LOG_PATH.open("a", encoding="utf-8", errors="replace")
+        except OSError as e:
+            self._append(f"!! No se pudo abrir el log {LOG_PATH}: {e}")
+            return
+        self._log("=" * 72)
+        self._log(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] "
+                  f"{'VISTA PREVIA' if dry_run else 'SUBIDA REAL'} · fecha {fecha}")
+        self._log(f"cmd: {' '.join(cmd)}")
+        self._log("=" * 72)
+
+    def _log(self, texto: str):
+        """Escribe una línea al log de disco. Silencioso: un log roto no frena el push."""
+        if self.logf is None:
+            return
+        try:
+            self.logf.write(texto + "\n")
+            self.logf.flush()   # por línea: si el panel muere, lo escrito ya está en disco
+        except OSError:
+            self.logf = None
+
+    def _log_cerrar(self, code):
+        self._log(f"-- fin: rc={code} · wms_error={self._wms_error} --")
+        if self.logf is not None:
+            try:
+                self.logf.close()
+            except OSError:
+                pass
+            self.logf = None
+
     def _append(self, line: str):
         tag = None
         low = line.lower()
@@ -226,6 +273,7 @@ class PushPanel:
             cmd = [py, str(PUSH_SCRIPT), "--fecha", f, "--wms-only", "--dry-run"]
         else:
             cmd = [py, str(SYNC_SCRIPT), "--fecha", f]
+        self._log_abrir(cmd, dry_run, f)
         threading.Thread(target=self._worker, args=(cmd,), daemon=True).start()
 
     def _worker(self, cmd):
@@ -250,6 +298,7 @@ class PushPanel:
             while True:
                 kind, payload = self.q.get_nowait()
                 if kind == "line":
+                    self._log(payload)   # al disco va TODO, incluido ##SUMMARY##
                     if payload.startswith("##SUMMARY##"):
                         try:
                             data = json.loads(payload[len("##SUMMARY##"):].strip())
@@ -268,6 +317,7 @@ class PushPanel:
         self.root.after(80, self._poll)
 
     def _finish(self, code):
+        self._log_cerrar(code)
         self.running = False
         self.proc = None
         self.btn_prev.config(state="normal")
@@ -279,6 +329,7 @@ class PushPanel:
                                      "'Que va quedando Easy' pudo quedar sin actualizar. Reintenta.")
             self._append("!! El push al sheet 'BASE DE DATOS WMS' / Easy falló. Revisa el log "
                          "arriba y vuelve a ejecutar.")
+            self._append(f"   El detalle completo quedó guardado en: {LOG_PATH}")
         elif code == 0:
             self.status.config(text="◢◤ ONLINE", fg=GREEN)
             self.footer.config(text="Listo. ✓")

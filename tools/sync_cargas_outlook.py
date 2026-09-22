@@ -20,6 +20,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -43,6 +44,7 @@ from ingest_archivo import ingestar_archivo  # noqa: E402
 FOLDER_NAME = os.getenv("OUTLOOK_FOLDER", "WMS")
 TMP_DIR = PROJECT_ROOT / ".tmp" / "correos_descargados"
 DIAS_VENTANA = int(os.getenv("DIAS_VENTANA", "7"))
+MAX_SCAN = int(os.getenv("MAX_SCAN_CORREOS", "500"))
 
 SUBJECT_REGEX = re.compile(
     r"env[ií]o de gu[ií]as de despachos|easy\s*go|detalle.*carga",
@@ -98,44 +100,51 @@ def _get_entry_id(msg) -> str:
         return str(msg.ReceivedTime) + str(msg.Subject)
 
 
-def _download_attachment(msg) -> tuple[bytes, str] | None:
-    """Descarga el primer adjunto Excel/CSV/ZIP. Si es ZIP, extrae el primer Excel/CSV.
-    Retorna (file_bytes, filename) o None."""
-    import zipfile, io
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
-    for i in range(msg.Attachments.Count):
-        att = msg.Attachments.Item(i + 1)
-        filename = att.FileName or ""
-        ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
-        if ext not in ("csv", "xlsx", "xls", "zip"):
-            continue
-        # Descargar a disco temporal
-        tmp_path = TMP_DIR / filename
-        att.SaveAsFile(str(tmp_path.resolve()))
-        file_bytes = tmp_path.read_bytes()
-        if ext == "zip":
-            # Extraer primer Excel/CSV del ZIP
-            try:
-                with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-                    inner = [n for n in z.namelist()
-                             if n.lower().endswith((".xlsx", ".xls", ".csv"))
-                             and not n.startswith("__MACOSX")]
-                    if not inner:
-                        continue
-                    filename = inner[0].rsplit("/", 1)[-1]
-                    file_bytes = z.read(inner[0])
-            except Exception as e:
-                print(f"  ! Error al descomprimir ZIP {att.FileName}: {e}")
+def _correos_de_fecha(folder, target) -> list:
+    """Correos de `target` con asunto válido y adjuntos, del MÁS VIEJO al MÁS NUEVO.
+
+    Única fuente de "qué correos son de este día": la usan main() e iter_adjuntos_fecha()
+    para no elegir cada una por su cuenta.
+
+    No confía en el orden en que Outlook entrega la colección ni corta con `break` al
+    primer correo de otra fecha: recorre una ventana fija y ordena por ReceivedTime.
+    Confiar en el orden es lo que rompió el 2026-08-07 — se ingirió el correo de las
+    11:31 (3 cargas) en vez del último (5). Los correos WMS son ACUMULATIVOS, así que
+    leer uno viejo no da error: da menos cargas, en silencio.
+
+    ponytail: ventana fija de MAX_SCAN mensajes (~16 días a 30 correos/día) en vez de
+    Items.Restrict(), cuyo filtro de fechas depende del formato regional de Windows.
+    Si hay que mirar más atrás, subir MAX_SCAN_CORREOS.
+    """
+    items = folder.Items
+    try:
+        items.Sort("[ReceivedTime]", True)  # solo para que lo reciente caiga en la ventana
+    except Exception:
+        pass
+
+    encontrados = []
+    for i in range(min(items.Count, MAX_SCAN)):
+        try:
+            msg = items.Item(i + 1)
+            if _recv_date(msg) != target:
                 continue
-        return file_bytes, filename
-    return None
+            if not SUBJECT_REGEX.search(msg.Subject or ""):
+                continue
+            if msg.Attachments.Count == 0:
+                continue
+            encontrados.append((msg.ReceivedTime, msg))
+        except Exception:
+            continue
+
+    encontrados.sort(key=lambda par: par[0])
+    return [msg for _, msg in encontrados]
 
 
 def _iter_attachments(msg):
     """Genera (file_bytes, filename) por CADA adjunto válido (Excel/CSV/ZIP) del correo.
 
-    A diferencia de _download_attachment (que devuelve solo el primero), recorre todos
-    los adjuntos. Necesario cuando un correo trae varias cargas como adjuntos separados.
+    Recorre TODOS los adjuntos: un correo puede traer varias cargas como adjuntos
+    separados, y quedarse con el primero pierde las demás en silencio.
     """
     import zipfile, io
     TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -202,9 +211,23 @@ def _parse_float(v) -> float | None:
 
 
 def _recv_date(msg) -> "datetime.date":
+    """Fecha del correo en HORA DE CHILE (es la que se guarda como fecha_correo).
+
+    Outlook entrega ReceivedTime en UTC, 4 horas adelante: sin convertir, todo correo
+    que llegue desde las 20:00 CL queda archivado al día siguiente. El síntoma sería
+    cargas que no aparecen en su día y que, a diferencia del bug del 2026-08-07,
+    re-correr el sync NO recupera (para el código ese correo es de otro día, y
+    upsert_carga no reubica: ON CONFLICT(numero_carga) DO NOTHING con PK global).
+
+    ponytail: hoy WMS corta a las 19:31 CL — 28 min de margen fue lo más ajustado en
+    95 días medidos. Si empiezan a mandar pasadas las 20:00 CL esto deja de ser seguro
+    de más y pasa a ser lo único que evita el desfase.
+    """
     try:
         rt = msg.ReceivedTime
-        return datetime(rt.year, rt.month, rt.day).date()
+        if rt.tzinfo is not None:  # naive → ya viene en hora local, convertir restaría de más
+            rt = rt.astimezone(ZoneInfo("America/Santiago"))
+        return rt.date()
     except Exception:
         return datetime.today().date()
 
@@ -283,72 +306,36 @@ def main(fecha=None) -> dict:
 
     print(f"Carpeta encontrada: {folder.Name} ({folder.Items.Count} mensajes)")
 
-    # Ordenar descendente para procesar los más recientes primero y cortar pronto
-    items = folder.Items
-    try:
-        items.Sort("[ReceivedTime]", True)
-    except Exception:
-        pass
+    correos = _correos_de_fecha(folder, target)
+    print(f"Correos de la fecha con adjuntos: {len(correos)}")
+    if es_wms:
+        # Acumulativos: arrancar por el MÁS NUEVO y cortar en el primero que rinda.
+        correos = list(reversed(correos))
 
     total_cargas = 0
     total_items = 0
     procesados = 0
 
-    for i in range(items.Count):
-        msg = items.Item(i + 1)
-        try:
-            recv_date = _date(
-                msg.ReceivedTime.year,
-                msg.ReceivedTime.month,
-                msg.ReceivedTime.day,
-            )
-        except Exception:
-            recv_date = _date.today()
-
-        # Filtrar por la fecha objetivo (correos ordenados DESC)
-        if recv_date > target:
-            continue  # más nuevo que el objetivo → saltar
-        if recv_date < target:
-            break  # más viejo que el objetivo → parar
-
+    for msg in correos:
         entry_id = _get_entry_id(msg)
         if not es_wms and email_ya_procesado(entry_id):
             continue
 
-        subject = msg.Subject or ""
-        if not SUBJECT_REGEX.search(subject):
-            if not es_wms:
-                marcar_email_procesado(entry_id)
-            continue
+        print(f"\nProcesando: {(msg.Subject or '')!r} ({msg.ReceivedTime})")
 
-        print(f"\nProcesando: {subject!r}")
-
-        if msg.Attachments.Count == 0:
-            print("  ! Sin adjuntos — se omite")
-            if not es_wms:
-                marcar_email_procesado(entry_id)
-            continue
-
-        result = _download_attachment(msg)
-        if not result:
-            print("  ! Sin adjunto Excel/CSV/ZIP válido — se omite")
-            if not es_wms:
-                marcar_email_procesado(entry_id)
-            continue
-
-        file_bytes, filename = result
         fecha_correo = _recv_date(msg)
-        try:
-            res = ingestar_archivo(file_bytes, filename, fecha_correo)
-        except Exception as e:
-            print(f"  ! Error ingiriendo {filename}: {e}")
-            if not es_wms:
-                marcar_email_procesado(entry_id)
-            continue
+        cargas = items_n = 0
+        for file_bytes, filename in _iter_attachments(msg):
+            try:
+                res = ingestar_archivo(file_bytes, filename, fecha_correo)
+            except Exception as e:
+                print(f"  ! Error ingiriendo {filename}: {e}")
+                continue
+            if res.get("errores"):
+                print(f"  ! Errores durante ingesta: {res['errores'][:2]}")
+            cargas += res["cargas"]
+            items_n += res["items"]
 
-        cargas, items_n = res["cargas"], res["items"]
-        if res.get("errores"):
-            print(f"  ! Errores durante ingesta: {res['errores'][:2]}")
         if not es_wms:
             marcar_email_procesado(entry_id)
         if cargas > 0 or items_n > 0:
@@ -356,6 +343,8 @@ def main(fecha=None) -> dict:
             total_items += items_n
             procesados += 1
             print(f"  OK {cargas} carga(s), {items_n} item(s) (fecha={fecha_correo})")
+        else:
+            print("  ! Sin adjunto Excel/CSV/ZIP válido — se omite")
 
         # Para WMS: el correo más reciente de la fecha ya tiene toda la data → parar
         if es_wms and (cargas > 0 or items_n > 0):
@@ -374,10 +363,10 @@ def iter_adjuntos_fecha(fecha=None):
     """Genera (file_bytes, filename, fecha_correo) de los adjuntos del ÚLTIMO correo
     WMS de la fecha objetivo.
 
-    Reutiliza la misma lógica de escaneo/filtrado que main() (carpeta OUTLOOK_FOLDER,
-    SUBJECT_REGEX, filtro por fecha, orden DESC). Como los correos WMS son acumulativos
-    (el último del día ya trae todas las cargas), para `es_wms` se detiene en el primer
-    correo (= más reciente) con adjunto(s) válido(s) — igual que main().
+    Usa el MISMO selector de correos que main() (_correos_de_fecha), así ambos no pueden
+    elegir correos distintos. Como los correos WMS son acumulativos (el último del día ya
+    trae todas las cargas), para `es_wms` arranca por el más nuevo y corta en el primero
+    con adjunto(s) válido(s).
 
     Lanza OutlookNoDisponible si Outlook no está accesible.
     """
@@ -391,32 +380,11 @@ def iter_adjuntos_fecha(fecha=None):
     if folder is None:
         raise OutlookNoDisponible(f"carpeta '{FOLDER_NAME}' no encontrada en Outlook.")
 
-    items = folder.Items
-    try:
-        items.Sort("[ReceivedTime]", True)  # descendente
-    except Exception:
-        pass
+    correos = _correos_de_fecha(folder, target)
+    if es_wms:
+        correos = list(reversed(correos))  # del más nuevo al más viejo
 
-    for i in range(items.Count):
-        msg = items.Item(i + 1)
-        try:
-            recv_date = _date(
-                msg.ReceivedTime.year, msg.ReceivedTime.month, msg.ReceivedTime.day
-            )
-        except Exception:
-            recv_date = _date.today()
-
-        if recv_date > target:
-            continue
-        if recv_date < target:
-            break
-
-        subject = msg.Subject or ""
-        if not SUBJECT_REGEX.search(subject):
-            continue
-        if msg.Attachments.Count == 0:
-            continue
-
+    for msg in correos:
         fecha_correo = _recv_date(msg)
         rindio = False
         for file_bytes, filename in _iter_attachments(msg):

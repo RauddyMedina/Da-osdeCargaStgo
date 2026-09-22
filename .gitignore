@@ -12,3 +12,7 @@ __pycache__/
 credentials.json
 token.json
 *.log
+
+# Datos sueltos de trabajo (no se versionan)
+*.xlsx
+fotos.tar.gz

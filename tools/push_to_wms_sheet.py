@@ -41,14 +41,23 @@ TMP_DIR = PROJECT_ROOT / ".tmp" / "correos_descargados"
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 
 
-def _descargar_adjuntos(fecha) -> list[Path]:
-    """Baja los adjuntos de la fecha y devuelve sus rutas en disco."""
+def _descargar_adjuntos(fecha, adjuntos=None) -> list[Path]:
+    """Escribe los adjuntos de la fecha a disco y devuelve sus rutas.
+
+    adjuntos: lista ya bajada de (file_bytes, filename, fecha_correo). Si viene, NO se
+    escanea Outlook. sync_and_push la pasa para que la base de daños y el sheet coman
+    del MISMO correo: con dos escaneos separados, un correo WMS que llega entre medio
+    hace que cada uno lea un adjunto distinto (pasó el 2026-08-07: sheet 5 cargas,
+    base 3). Si es None, escanea por su cuenta (uso suelto y --dry-run).
+    """
     from sync_cargas_outlook import OutlookNoDisponible, iter_adjuntos_fecha
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     rutas: list[Path] = []
     try:
-        for file_bytes, filename, _fecha_correo in iter_adjuntos_fecha(fecha):
+        for file_bytes, filename, _fecha_correo in (
+            iter_adjuntos_fecha(fecha) if adjuntos is None else adjuntos
+        ):
             destino = TMP_DIR / filename
             destino.write_bytes(file_bytes)
             rutas.append(destino)
@@ -143,7 +152,7 @@ def _emit_combined(cargas, entregas, filas, opl_filas, opl_subordenes, dry_run,
 
 
 def push_y_easy(fecha=None, dry_run: bool = False,
-                do_opl: bool = True, do_wms: bool = True) -> int:
+                do_opl: bool = True, do_wms: bool = True, adjuntos=None) -> int:
     """Sube WMS y/o OPL de la fecha a sus bases y alimenta 'Que va quedando Easy'.
 
     - WMS (carpeta "WMS")  → 'BASE DE DATOS WMS'  + entregas a Easy.
@@ -153,6 +162,9 @@ def push_y_easy(fecha=None, dry_run: bool = False,
     do_opl / do_wms permiten correr SOLO uno:
     - Panel OPL (botón aparte): do_opl=True,  do_wms=False  (--opl-only).
     - Panel WMS / Render:       do_opl=False, do_wms=True   (--wms-only).
+
+    adjuntos: adjuntos WMS ya bajados de Outlook (ver _descargar_adjuntos). Si es None,
+    se bajan acá.
 
     Devuelve un returncode (0 = OK). No lanza: best-effort para no romper el flujo Render.
     """
@@ -171,7 +183,7 @@ def push_y_easy(fecha=None, dry_run: bool = False,
         opl_rc, opl_filas, subordenes = 0, 0, []
 
     # 2) WMS (si toca): descargar adjuntos de la fecha.
-    rutas = _descargar_adjuntos(target) if do_wms else []
+    rutas = _descargar_adjuntos(target, adjuntos) if do_wms else []
 
     # 3) Subordenes OPL → JSON temporal para pasarlos a integration_push (cadena Easy única).
     easy_extra_path = None
