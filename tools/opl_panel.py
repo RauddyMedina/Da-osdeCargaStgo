@@ -203,6 +203,7 @@ class OplPanel:
         self._opl_error = False
         self.btn_prev.config(state="disabled")
         self.btn_push.config(state="disabled")
+        self._fue_previa = dry_run
         self._set_metrics("…", "…")
         self.status.config(text="◢◤ PROCESANDO", fg=YELLOW)
         self.footer.config(text=("Vista previa (dry-run)…" if dry_run else "Subiendo OPL + subordenes a Easy…"))
@@ -265,9 +266,18 @@ class OplPanel:
             self.footer.config(text="⚠ La subida OPL FALLÓ (FILAS OPL en rojo). Los correos no se "
                                      "marcaron como procesados; vuelve a ejecutar.")
             self._append("!! La subida de OPL falló. Revisa el log; se reintentará en la próxima corrida.")
+        elif code == 0 and getattr(self, "_fue_previa", False):
+            # La vista previa mostraba los MISMOS numeros grandes que la subida real, y
+            # era facil leerla como "ya esta". Paso el 21-10: los 76 pedidos se vieron
+            # en pantalla, nadie apreto SUBIR y quedaron fuera de la base (101 filas).
+            self.status.config(text="◢◤ SOLO VISTA PREVIA", fg=YELLOW)
+            self.footer.config(text="⚠ VISTA PREVIA: NO se subio nada todavia. "
+                                    "Apreta SUBIR OPL para cargarlo de verdad.")
+            self.m_filas.config(fg=YELLOW)
+            self._append(">> OJO: esto fue solo una vista previa. Nada se escribio aun.")
         elif code == 0:
             self.status.config(text="◢◤ ONLINE", fg=GREEN)
-            self.footer.config(text="Listo. ✓")
+            self.footer.config(text="Listo. ✓ Subido a la base.")
         else:
             self.status.config(text="◢◤ ERROR", fg=MAGENTA)
             self.footer.config(text=f"Terminó con código {code}.")

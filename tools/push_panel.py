@@ -256,6 +256,7 @@ class PushPanel:
         f = self.fecha.get().strip()
         self.running = True
         self._wms_error = False
+        self._fue_previa = dry_run
         self.btn_prev.config(state="disabled")
         self.btn_push.config(state="disabled")
         self._set_metrics("…", "…", "…")
@@ -330,9 +331,17 @@ class PushPanel:
             self._append("!! El push al sheet 'BASE DE DATOS WMS' / Easy falló. Revisa el log "
                          "arriba y vuelve a ejecutar.")
             self._append(f"   El detalle completo quedó guardado en: {LOG_PATH}")
+        elif code == 0 and getattr(self, "_fue_previa", False):
+            # La vista previa mostraba los MISMOS numeros grandes que la subida real y
+            # terminaba diciendo "Listo", asi que era facil leerla como "ya subio".
+            # Mismo arreglo que en opl_panel.py.
+            self.status.config(text="◢◤ SOLO VISTA PREVIA", fg=YELLOW)
+            self.footer.config(text="⚠ VISTA PREVIA: NO se subio nada todavia. "
+                                    "Apreta SUBIR SHEET+RENDER para cargarlo de verdad.")
+            self._append(">> OJO: esto fue solo una vista previa. Nada se escribio aun.")
         elif code == 0:
             self.status.config(text="◢◤ ONLINE", fg=GREEN)
-            self.footer.config(text="Listo. ✓")
+            self.footer.config(text="Listo. ✓ Subido.")
         else:
             self.status.config(text="◢◤ ERROR", fg=MAGENTA)
             self.footer.config(text=f"Terminó con código {code}.")

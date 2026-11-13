@@ -1,4 +1,4 @@
-"""Endpoint HTTP `/api/import` inyectado en Streamlit.
+"""Endpoints HTTP `/api/import`, `/api/import-archivo` y `/api/export` en Streamlit.
 
 Soporta ambos modos de servidor:
 - Starlette/uvicorn (Render, server.useStarlette=True)
@@ -51,6 +51,28 @@ def _handle_import(payload: dict) -> dict:
     return {"ok": True, "cargas": n_c, "items": n_i}
 
 
+def _handle_import_archivo(payload: dict) -> dict:
+    """Ingesta el Excel/CSV del WMS tal cual viene (base64), con el parser de siempre.
+
+    Lo usa el panel de bases (inventario.fluxaia.cloud/bases) cuando alguien sube el
+    adjunto a mano porque el correo no llegó al PC. El archivo se parsea ACÁ y no allá
+    a propósito: así el formato lo entiende **un solo** parser (tools/ingest_archivo.py)
+    y no hay dos lecturas que se puedan desincronizar — el 26-10-2026 la carga subida
+    por la web entró al Google Sheet y acá no, y no se pudo declarar nada.
+    """
+    import base64
+    from datetime import date as _date
+    from ingest_archivo import ingestar_archivo
+
+    contenido = base64.b64decode(payload["contenido_b64"])
+    res = ingestar_archivo(contenido,
+                           payload.get("filename") or "carga.xlsx",
+                           _date.fromisoformat(payload["fecha"]))
+    # `preview` es un DataFrame: no entra en un JSON y tampoco le sirve a nadie acá.
+    return {"ok": res["cargas"] > 0, "cargas": res["cargas"], "items": res["items"],
+            "errores": res["errores"][:5]}
+
+
 def _handle_export(fecha_iso: str) -> dict:
     """SOLO LECTURA: cargas + daños declarados de una fecha (fecha_correo).
 
@@ -98,6 +120,18 @@ async def _starlette_import(request):
         return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
 
 
+async def _starlette_import_archivo(request):
+    from starlette.responses import JSONResponse
+    auth = request.headers.get("Authorization", "")
+    if not UPLOAD_TOKEN or auth != f"Bearer {UPLOAD_TOKEN}":
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    try:
+        payload = await request.json()
+        return JSONResponse(_handle_import_archivo(payload))
+    except Exception as e:
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
 async def _starlette_export(request):
     from starlette.responses import JSONResponse
     auth = request.headers.get("Authorization", "")
@@ -125,6 +159,8 @@ def _install_starlette() -> bool:
         def patched(runtime):
             routes = original(runtime)
             routes.insert(0, Route("/api/import", _starlette_import, methods=["POST"]))
+            routes.insert(0, Route("/api/import-archivo", _starlette_import_archivo,
+                                   methods=["POST"]))
             routes.insert(0, Route("/api/export", _starlette_export, methods=["GET"]))
             return routes
 
@@ -149,6 +185,8 @@ def _install_tornado() -> bool:
             return True
 
         class _ImportHandler(RequestHandler):
+            handler = staticmethod(_handle_import)
+
             def set_default_headers(self):
                 self.set_header("Content-Type", "application/json")
 
@@ -160,19 +198,25 @@ def _install_tornado() -> bool:
                     return
                 try:
                     payload = json.loads(self.request.body or b"{}")
-                    result = _handle_import(payload)
-                    self.write(result)
+                    self.write(self.handler(payload))
                 except Exception as e:
                     self.set_status(500)
                     self.write({"error": f"{type(e).__name__}: {e}"})
+
+        class _ImportArchivoHandler(_ImportHandler):
+            handler = staticmethod(_handle_import_archivo)
 
         original = st_server.Server._create_app
 
         def _patched(self):
             app = original(self)
             try:
-                new_rule = Rule(PathMatches(r"/api/import"), _ImportHandler)
-                app.wildcard_router.rules.insert(1, new_rule)
+                # El de -archivo primero: PathMatches(r"/api/import") no ancla el
+                # final y se comería /api/import-archivo.
+                app.wildcard_router.rules.insert(
+                    1, Rule(PathMatches(r"/api/import-archivo"), _ImportArchivoHandler))
+                app.wildcard_router.rules.insert(
+                    2, Rule(PathMatches(r"/api/import"), _ImportHandler))
             except Exception as e:
                 print(f"[upload_endpoint] Tornado rule inject falló: {e}")
             return app

@@ -1,5 +1,39 @@
 # Workflow: Sincronización de Cargas desde Outlook
 
+## Por dónde entran las cargas (hay tres vías)
+
+| Vía | Quién la dispara | Estado |
+|---|---|---|
+| **PC** — `tools/sync_and_push.py` (Outlook COM → base local → `POST /api/import`) | el PC de Rauddy | la de siempre; si el PC no corre, no entra nada |
+| **Cron IMAP** — `sync-cargas-imap` del `render.yaml` | Render, cada hora | **muerto**: el tenant bloquea la auth básica de IMAP |
+| **Panel web** — `inventario.fluxaia.cloud/bases`, tarjetas WMS y Metabase → `POST /api/import-archivo` | quien sube el Excel a mano | escrita el 27-10-2026, **viva recién desde el 13-11-2026** |
+
+> **Lo que costó caro (26-10-2026):** la carga del WMS se subió por el panel web, que
+> hasta ese día sólo escribía en el Google Sheet. En el andén no se pudo declarar nada
+> porque acá no había llegado **ninguna** de las 6 cargas, y el cron IMAP tampoco traía
+> nada desde el 24. De ahí sale `/api/import-archivo`.
+
+> **Lo que costó caro de nuevo (12-11-2026):** `/api/import-archivo` existía en el disco
+> y **nunca se había pusheado** a `RauddyMedina/Da-osdeCargaStgo`, que es lo que Render
+> despliega. O sea que la vía web contestaba **405** desde el día uno y el aviso a Daños
+> fallaba siempre. Las 5 cargas del 12-11 hubo que empujarlas armando el payload
+> `{cargas, items}` a mano contra `/api/import`.
+>
+> **Dos cosas que hay que recordar de ese arreglo:**
+> 1. Render **solo despliega al pushear**: un endpoint nuevo sin push no existe. La forma
+>    de comprobarlo en un minuto es pegarle con un token falso — **401** significa que la
+>    ruta está; **405** significa que no está y lo atendió Streamlit.
+> 2. En Tornado hay que registrar `/api/import-archivo` **antes** que `/api/import`:
+>    `PathMatches(r"/api/import")` no ancla el final y se come la otra ruta.
+
+**El archivo se parsea SIEMPRE acá** (`tools/ingest_archivo.py`), venga del PC o de la
+web. Es a propósito: con dos parsers, el día que el WMS cambie un encabezado una vía
+carga y la otra se queda muda sin que nadie se entere.
+
+⚠️ **La fecha manda.** El panel web manda la *fecha del correo* que eligió quien sube, y
+la pantalla de daños filtra por fecha **exacta**: si se sube el correo de ayer con la
+fecha de hoy, las cargas quedan en el día equivocado y en el andén parece que faltan.
+
 ## Objetivo
 Leer correos nuevos de la carpeta `EasyGo` en Outlook 365, descargar el adjunto Excel/CSV con el detalle de la carga liberada, y poblar las tablas `cargas` e `items` en SQLite.
 
